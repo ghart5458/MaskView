@@ -254,7 +254,7 @@ class Sidebar(QWidget):
             self._file_checks[ft] = cb
             self._sec_display.body.addWidget(cb)
         self._sec_display.body.addWidget(_sep())
-        self._apply_btn = QPushButton("Update")
+        self._apply_btn = QPushButton("Load")
         self._apply_btn.setEnabled(False)
         self._apply_btn.setStyleSheet(
             "QPushButton { background: #0f2a1a; color: #5fd49a; border: none;"

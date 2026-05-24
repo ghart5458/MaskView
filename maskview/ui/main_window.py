@@ -12,6 +12,7 @@ from .multi_viewer import MultiViewer
 from .sidebar import Sidebar
 
 _DEFAULT_FILE_TYPES = ["original", "maskseg"]
+_PRELOAD_AHEAD      = 2   # how many individuals to pre-load after the current one
 
 
 # ── Background loader ─────────────────────────────────────────────────────────
@@ -50,6 +51,42 @@ class _LoaderThread(QThread):
         self.all_done.emit()
 
 
+# ── Background pre-loader ─────────────────────────────────────────────────────
+
+class _PreloaderThread(QThread):
+    """Quietly pre-loads an individual's files into a cache. Yields between files
+    so it doesn't compete with UI rendering."""
+
+    chunk_ready = pyqtSignal(int, str, object, float, float)  # idx, ft, data, lo, hi
+
+    def __init__(self, ind_idx: int, ind: Individual, file_types: list[str], parent=None):
+        super().__init__(parent)
+        self._idx        = ind_idx
+        self._ind        = ind
+        self._file_types = file_types
+        self._stop       = False
+
+    def stop(self):
+        self._stop = True
+
+    def run(self):
+        for ft in self._file_types:
+            if self._stop:
+                break
+            path = resolve_file(self._ind, ft)
+            if path is None:
+                continue
+            try:
+                data, _ = load_volume(path, use_memmap=False)
+                dmax = display_max(ft)
+                lo, hi = (0.0, float(dmax)) if dmax is not None else compute_display_range(data)
+                self.chunk_ready.emit(self._idx, ft, data, lo, hi)
+            except Exception:
+                pass
+            # Brief yield between files to avoid hogging CPU from the UI thread
+            self.msleep(80)
+
+
 # ── Main window ───────────────────────────────────────────────────────────────
 
 class MainWindow(QMainWindow):
@@ -64,6 +101,11 @@ class MainWindow(QMainWindow):
         self._loading = False
         self._loading_ind = ""
         self._loader: _LoaderThread | None = None
+
+        # Pre-load cache: {individual_idx: {file_type: (data, lo, hi)}}
+        self._preload_cache: dict[int, dict[str, tuple]] = {}
+        self._preloaders: list[_PreloaderThread] = []
+
         self._setup_ui()
 
     def _setup_ui(self):
@@ -115,6 +157,8 @@ class MainWindow(QMainWindow):
     # ── Session ───────────────────────────────────────────────────────────────
 
     def _on_par_selected(self, path: Path):
+        self._cancel_preloaders()
+        self._preload_cache.clear()
         self._par_path = path
         self._sidebar.set_par_label(path)
         self._individuals = parse_par(path)
@@ -122,7 +166,7 @@ class MainWindow(QMainWindow):
         if not self._individuals:
             return
         # Show availability for individual 0 but don't start loading —
-        # let the user confirm file selection via Update first.
+        # let the user confirm file selection via Load first.
         self._current_idx = 0
         ind = self._individuals[0]
         available = {ft: (resolve_file(ind, ft) is not None) for ft in FILE_TYPE_ORDER}
@@ -141,7 +185,33 @@ class MainWindow(QMainWindow):
         available = {ft: (resolve_file(ind, ft) is not None) for ft in FILE_TYPE_ORDER}
         to_load = [ft for ft in self._session_types if available.get(ft)]
         self._sidebar.update_file_availability(available, set(to_load))
-        self._start_load(ind, to_load)
+
+        cached = self._preload_cache.pop(idx, {})
+        if cached:
+            # Some or all files already loaded in the background — use them immediately
+            self._cancel_loader()
+            self._viewer.clear()
+            self._sidebar.update_annotations([])
+
+            for ft in to_load:
+                if ft in cached:
+                    data, lo, hi = cached[ft]
+                    self._viewer.add_panel(ft, data, lo, hi)
+                    self._sidebar.set_file_loaded(ft, True)
+
+            missing = [ft for ft in to_load if ft not in cached]
+            if missing:
+                self._launch_loader(ind, missing)
+            else:
+                self._sidebar.set_controls_enabled(True)
+                QTimer.singleShot(0, self._viewer.sync_all)
+
+            self._sidebar.update_annotations([p.file_type for p in self._viewer.panels])
+        else:
+            self._start_load(ind, to_load)
+
+        # Queue pre-loading of the next few individuals
+        QTimer.singleShot(300, lambda: self._start_preload(idx))
 
     # ── Loading ───────────────────────────────────────────────────────────────
 
@@ -154,6 +224,11 @@ class MainWindow(QMainWindow):
     def _launch_loader(self, ind: Individual, file_types: list[str]):
         if not file_types:
             return
+
+        # Add placeholder panels immediately so the correct layout appears before data arrives
+        for ft in file_types:
+            self._viewer.add_empty_panel(ft)
+
         self._loading = True
         self._loading_ind = ind.oldname
         self._loaded_count = 0
@@ -188,7 +263,7 @@ class MainWindow(QMainWindow):
         )
 
     def _on_file_loaded(self, ft: str, data: object, lo: float, hi: float):
-        self._viewer.add_panel(ft, data, lo, hi)
+        self._viewer.fill_panel(ft, data, lo, hi)
         self._sidebar.set_file_loaded(ft, True)
         self._loaded_count += 1
         self._status_label.setText(
@@ -196,7 +271,8 @@ class MainWindow(QMainWindow):
         )
         self._sidebar.update_annotations([p.file_type for p in self._viewer.panels])
 
-    def _on_file_failed(self, _ft: str, _msg: str):
+    def _on_file_failed(self, ft: str, _msg: str):
+        self._viewer.close_panel(ft)   # remove the placeholder that was added
         self._loaded_count += 1
         self._status_label.setText(
             f"{self._loading_ind}  ·  {self._loaded_count}/{self._total_count} loaded"
@@ -210,14 +286,54 @@ class MainWindow(QMainWindow):
         # Defer sync so it runs after all pending fit_to_view timers fire
         QTimer.singleShot(0, self._viewer.sync_all)
 
+    # ── Pre-loading ───────────────────────────────────────────────────────────
+
+    def _start_preload(self, after_idx: int):
+        """Pre-load the next _PRELOAD_AHEAD individuals into cache."""
+        self._cancel_preloaders()
+        end = min(after_idx + _PRELOAD_AHEAD + 1, len(self._individuals))
+        for i in range(after_idx + 1, end):
+            if i in self._preload_cache:
+                continue
+            ind = self._individuals[i]
+            to_load = [ft for ft in self._session_types
+                       if resolve_file(ind, ft) is not None]
+            if not to_load:
+                continue
+            loader = _PreloaderThread(i, ind, to_load)
+            loader.chunk_ready.connect(self._on_preload_chunk)
+            loader.start()
+            self._preloaders.append(loader)
+
+    def _cancel_preloaders(self):
+        for loader in self._preloaders:
+            try:
+                loader.chunk_ready.disconnect()
+            except RuntimeError:
+                pass
+            loader.stop()
+        self._preloaders.clear()
+
+    def _on_preload_chunk(self, idx: int, ft: str, data: object, lo: float, hi: float):
+        if idx not in self._preload_cache:
+            self._preload_cache[idx] = {}
+        self._preload_cache[idx][ft] = (data, lo, hi)
+        # Keep cache bounded to avoid unbounded memory use
+        if len(self._preload_cache) > _PRELOAD_AHEAD + 1:
+            oldest = next(iter(self._preload_cache))
+            del self._preload_cache[oldest]
+
     # ── File selection ────────────────────────────────────────────────────────
 
     def _on_files_applied(self, file_types: list[str]):
         if self._current_idx < 0:
             return
         self._session_types = list(file_types)
-        ind = self._individuals[self._current_idx]
+        # Session types changed — cached data was loaded with the old type list
+        self._cancel_preloaders()
+        self._preload_cache.clear()
 
+        ind = self._individuals[self._current_idx]
         self._cancel_loader()
 
         # Close panels not in the new selection
@@ -236,4 +352,3 @@ class MainWindow(QMainWindow):
     def _on_panel_closed(self, ft: str):
         self._sidebar.set_file_loaded(ft, False)
         self._sidebar.update_annotations([p.file_type for p in self._viewer.panels])
-

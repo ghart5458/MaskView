@@ -27,6 +27,10 @@ class VolumeViewer(QWidget):
         self._display_hi = 1.0
         self._current_z = 0
         self._orientation = "XY"
+        self._threshold_active = False
+        self._threshold_lo     = 0.0
+        self._threshold_hi     = 1.0
+        self._threshold_rgb    = [0, 200, 160]    # turquoise default
         self._setup_ui()
 
     def _setup_ui(self):
@@ -108,6 +112,38 @@ class VolumeViewer(QWidget):
     def set_pan(self, x: float, y: float):
         """Center viewport on scene point (x, y) without emitting pan_changed."""
         self._view.set_center(x, y)
+
+    def set_display_range(self, lo: float, hi: float):
+        self._display_lo = float(lo)
+        self._display_hi = float(hi)
+        self._update_slice()
+
+    def set_threshold(self, lo: float, hi: float):
+        self._threshold_lo     = lo
+        self._threshold_hi     = hi
+        self._threshold_active = True
+        self._update_slice()
+
+    def clear_threshold(self):
+        self._threshold_active = False
+        self._update_slice()
+
+    def set_threshold_color(self, r: int, g: int, b: int):
+        self._threshold_rgb = [r, g, b]
+        if self._threshold_active:
+            self._update_slice()
+
+    @property
+    def data(self) -> "np.ndarray | None":
+        return self._data
+
+    @property
+    def display_range(self) -> tuple[float, float]:
+        return self._display_lo, self._display_hi
+
+    @property
+    def current_slice_2d(self) -> "np.ndarray | None":
+        return self._get_slice_2d() if self._data is not None else None
 
     @property
     def current_slice(self) -> int:
@@ -191,7 +227,23 @@ class VolumeViewer(QWidget):
         norm = np.clip((slice_2d.astype(np.float32) - lo) / (hi - lo), 0.0, 1.0)
         gray = (norm * 255).astype(np.uint8)
         h, w = gray.shape
-        img = QImage(gray.tobytes(), w, h, w, QImage.Format.Format_Grayscale8)
+
+        if not self._threshold_active:
+            img = QImage(gray.tobytes(), w, h, w, QImage.Format.Format_Grayscale8)
+            return QPixmap.fromImage(img)
+
+        # RGB: grayscale base + highlight color for in-range pixels.
+        # np.where is fully vectorized; avoids boolean scatter writes.
+        tlo, thi   = self._threshold_lo, self._threshold_hi
+        in_range   = (slice_2d >= tlo) & (slice_2d <= thi)
+        tr, tg, tb = self._threshold_rgb
+        rgb = np.stack([
+            np.where(in_range, np.uint8(tr), gray),
+            np.where(in_range, np.uint8(tg), gray),
+            np.where(in_range, np.uint8(tb), gray),
+        ], axis=-1)
+        raw = rgb.tobytes()
+        img = QImage(raw, w, h, w * 3, QImage.Format.Format_RGB888)
         return QPixmap.fromImage(img)
 
     def _update_info(self):
@@ -236,6 +288,24 @@ class _PanZoomView(QGraphicsView):
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setStyleSheet("""
+            QScrollBar:horizontal {
+                height: 8px; background: #111; border: none; margin: 0;
+            }
+            QScrollBar::handle:horizontal {
+                background: #555; border-radius: 0px; min-width: 24px;
+            }
+            QScrollBar::handle:horizontal:hover { background: #888; }
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
+            QScrollBar:vertical {
+                width: 8px; background: #111; border: none; margin: 0;
+            }
+            QScrollBar::handle:vertical {
+                background: #555; border-radius: 0px; min-height: 24px;
+            }
+            QScrollBar::handle:vertical:hover { background: #888; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+        """)
         # Nearest-neighbor: preserve sharp voxel edges when zoomed in
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
 

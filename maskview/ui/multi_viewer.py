@@ -49,15 +49,29 @@ class MultiViewer(QWidget):
 
     # ── Panel management ──────────────────────────────────────────────────────
 
-    def add_panel(self, file_type: str, data: np.ndarray,
-                  lo: float, hi: float) -> ViewerPanel:
+    def add_empty_panel(self, file_type: str) -> ViewerPanel:
+        """Create a placeholder panel with no data and add it to the layout."""
         panel = ViewerPanel(file_type)
-        panel.viewer.load(data, lo, hi)
         panel.viewer.set_orientation(self._orientation)
         self._connect_panel(panel)
         panel.closed.connect(lambda p=panel: self._remove_panel(p))
         self._panels.append(panel)
         self._rebuild_layout()
+        return panel
+
+    def fill_panel(self, file_type: str, data: np.ndarray,
+                   lo: float, hi: float) -> bool:
+        """Load data into an existing placeholder panel. Returns False if not found."""
+        for panel in self._panels:
+            if panel.file_type == file_type:
+                panel.load(data, lo, hi)
+                return True
+        return False
+
+    def add_panel(self, file_type: str, data: np.ndarray,
+                  lo: float, hi: float) -> ViewerPanel:
+        panel = self.add_empty_panel(file_type)
+        panel.load(data, lo, hi)
         return panel
 
     @property

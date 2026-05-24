@@ -4,15 +4,15 @@ from ..par.parser import Individual
 
 FILE_TYPE_LABELS: dict[str, str] = {
     'original':   'Original CT',
-    'seg':        'Segmentation',
-    'rdn_seg':    'RDN Segmentation',
+    'seg':        'Binary Seg',
+    'rdn_seg':    'RDN Seg',
     'close':      'Close',
-    'outer':      'Outer Mask',
-    'inner':      'Inner Mask',
-    'thick':      'Thick Mask',
-    'trab':       'Trabecular Mask',
-    'masksegin':  'MaskSeg In',
-    'masksegout': 'MaskSeg Out',
+    'outer':      'OuterMask',
+    'inner':      'InnerMask',
+    'thick':      'ThickMask',
+    'trab':       'Trab',
+    'masksegin':  'MaskSegIn',
+    'masksegout': 'MaskSegOut',
     'maskseg':    'MaskSeg',
 }
 
