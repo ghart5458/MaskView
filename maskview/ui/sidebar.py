@@ -169,7 +169,7 @@ class Sidebar(QWidget):
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
         """)
-        panel_col.addWidget(scroll)
+        panel_col.addWidget(scroll, 1)
 
         content = QWidget()
         content.setStyleSheet("background: #181818;")
@@ -214,6 +214,37 @@ class Sidebar(QWidget):
         col.addStretch()
         scroll.setWidget(content)
 
+        # ── Nav bar pinned to bottom of panel ─────────────────────────────────
+        nav_bar = QWidget()
+        nav_bar.setStyleSheet(
+            "background: #141414; border-top: 1px solid #2e2e2e;"
+        )
+        _nrow = QHBoxLayout(nav_bar)
+        _nrow.setContentsMargins(6, 4, 6, 6)
+        _nrow.setSpacing(4)
+        _btn_style = (
+            "QPushButton { background: #202020; color: #999; border: none;"
+            " border-radius: 3px; font-size: 12px; padding: 2px 6px; }"
+            "QPushButton:hover:enabled { background: #2c2c2c; color: #ddd; }"
+            "QPushButton:disabled { color: #3a3a3a; }"
+        )
+        self._prev_btn = QPushButton("◀")
+        self._prev_btn.setFixedWidth(28)
+        self._prev_btn.setStyleSheet(_btn_style)
+        self._prev_btn.clicked.connect(self._go_prev)
+        self._counter = QLabel("— / —")
+        self._counter.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._counter.setStyleSheet("color: #888; font-size: 12px;")
+        self._next_btn = QPushButton("▶")
+        self._next_btn.setFixedWidth(28)
+        self._next_btn.setStyleSheet(_btn_style)
+        self._next_btn.clicked.connect(self._go_next)
+        _nrow.addWidget(self._prev_btn)
+        _nrow.addWidget(self._counter, stretch=1)
+        _nrow.addWidget(self._next_btn)
+        panel_col.addWidget(nav_bar)
+        self._refresh_nav(-1)
+
         self._build_file_section()
         self._build_tools_section()
         self._build_annotations_section([])
@@ -242,19 +273,56 @@ class Sidebar(QWidget):
 
         body.addWidget(_sep())
         self._sec_display = _Section("Display", expanded=True)
-        self._sec_display.body.setContentsMargins(8, 6, 8, 8)
-        self._sec_display.body.setSpacing(4)
+        db = self._sec_display.body
+        db.setContentsMargins(8, 6, 8, 8)
+        db.setSpacing(4)
+
+        _cb_style = (
+            "QCheckBox { color: #888; font-size: 12px; padding: 1px 0; }"
+            "QCheckBox:enabled { color: #ccc; }"
+            "QCheckBox:disabled { color: #4a4a4a; }"
+        )
+        cb_content = QWidget()
+        cb_content.setStyleSheet("background: #181818;")
+        cb_col = QVBoxLayout(cb_content)
+        cb_col.setContentsMargins(4, 2, 4, 2)
+        cb_col.setSpacing(3)
+        _default_checked = {"original", "maskseg"}
         for ft in FILE_TYPE_ORDER:
             cb = QCheckBox(FILE_TYPE_LABELS[ft])
-            cb.setEnabled(False)
-            cb.setStyleSheet(
-                "QCheckBox { color: #888; font-size: 12px; padding: 1px 0; }"
-                "QCheckBox:enabled { color: #ccc; }"
-                "QCheckBox:disabled { color: #4a4a4a; }"
-            )
+            cb.setEnabled(True)
+            cb.setChecked(ft in _default_checked)
+            cb.setStyleSheet(_cb_style)
+            cb.toggled.connect(lambda _: self._update_file_count())
             self._file_checks[ft] = cb
-            self._sec_display.body.addWidget(cb)
-        self._sec_display.body.addWidget(_sep())
+            cb_col.addWidget(cb)
+        cb_col.addStretch()
+
+        cb_scroll = QScrollArea()
+        cb_scroll.setWidgetResizable(True)
+        cb_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        cb_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        cb_scroll.setFixedHeight(120)
+        cb_scroll.setStyleSheet("""
+            QScrollArea { border: 1px solid #2e2e2e; background: #181818; }
+            QScrollBar:vertical { background: #141414; width: 8px; border: none; }
+            QScrollBar::handle:vertical {
+                background: #3a3a3a; border-radius: 3px; min-height: 16px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+        """)
+        cb_scroll.setWidget(cb_content)
+        db.addWidget(cb_scroll)
+
+        self._file_count_lbl = QLabel()
+        self._file_count_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._file_count_lbl.setStyleSheet(
+            "color: #666; font-size: 11px; padding: 0 2px 0 0;"
+        )
+        db.addWidget(self._file_count_lbl)
+        self._update_file_count()
+
+        db.addWidget(_sep())
         self._apply_btn = QPushButton("Load")
         self._apply_btn.setEnabled(False)
         self._apply_btn.setStyleSheet(
@@ -264,15 +332,10 @@ class Sidebar(QWidget):
             "QPushButton:disabled { background: #1a1a1a; color: #3a3a3a; }"
         )
         self._apply_btn.clicked.connect(self._on_apply)
-        self._sec_display.body.addWidget(self._apply_btn)
-        body.addWidget(self._sec_display)
+        db.addWidget(self._apply_btn)
 
-    def _build_tools_section(self):
-        body = self._sec_tools.body
-        body.setContentsMargins(8, 8, 8, 6)
-        body.setSpacing(5)
-
-        body.addWidget(_mini_label("ORIENTATION"))
+        db.addWidget(_sep())
+        db.addWidget(_mini_label("ORIENTATION"))
         orient_row = QWidget()
         orow = QHBoxLayout(orient_row)
         orow.setContentsMargins(0, 0, 0, 0)
@@ -288,10 +351,10 @@ class Sidebar(QWidget):
             self._orient_group.addButton(rb)
             orow.addWidget(rb)
         orow.addStretch()
-        body.addWidget(orient_row)
+        db.addWidget(orient_row)
 
-        body.addWidget(_sep())
-        body.addWidget(_mini_label("LAYOUT"))
+        db.addWidget(_sep())
+        db.addWidget(_mini_label("LAYOUT"))
         layout_row = QWidget()
         lrow = QHBoxLayout(layout_row)
         lrow.setContentsMargins(0, 0, 0, 0)
@@ -307,26 +370,50 @@ class Sidebar(QWidget):
             self._layout_group.addButton(rb)
             lrow.addWidget(rb)
         lrow.addStretch()
-        body.addWidget(layout_row)
+        db.addWidget(layout_row)
 
-        body.addWidget(_sep())
-        self._sync_cb = QCheckBox("Synchronize windows")
-        self._sync_cb.setChecked(True)
-        self._sync_cb.setStyleSheet("QCheckBox { color: #bbb; font-size: 12px; }")
-        self._sync_cb.toggled.connect(self.sync_toggled)
-        body.addWidget(self._sync_cb)
-
-        body.addWidget(_sep())
-        self._turbo_cb = QCheckBox("Turbo Mode")
+        db.addWidget(_sep())
+        turbo_row = QWidget()
+        turbo_row.setStyleSheet("background: transparent;")
+        trow = QHBoxLayout(turbo_row)
+        trow.setContentsMargins(0, 2, 0, 0)
+        trow.setSpacing(6)
+        trow.addWidget(_mini_label("TURBO MODE"))
+        trow.addStretch()
+        self._turbo_cb = QPushButton("OFF")
+        self._turbo_cb.setCheckable(True)
         self._turbo_cb.setChecked(False)
-        self._turbo_cb.setStyleSheet("QCheckBox { color: #bbb; font-size: 12px; }")
+        self._turbo_cb.setFixedSize(36, 20)
+        self._turbo_cb.setStyleSheet(
+            "QPushButton { background: #2a2a2a; color: #666; border: none;"
+            " border-radius: 3px; font-size: 11px; font-weight: bold; }"
+            "QPushButton:checked { background: #147a3f; color: #fff; }"
+            "QPushButton:hover:!checked { background: #333; color: #999; }"
+        )
         self._turbo_cb.setToolTip(
             "Load at quarter resolution (stride 4 in all three dimensions).\n"
             "All view orientations stay proportional; reduces load time and RAM use.\n"
             "Toggle takes effect on next Load."
         )
+        self._turbo_cb.toggled.connect(
+            lambda chk: self._turbo_cb.setText("ON" if chk else "OFF")
+        )
         self._turbo_cb.toggled.connect(self.turbo_toggled)
-        body.addWidget(self._turbo_cb)
+        trow.addWidget(self._turbo_cb)
+        db.addWidget(turbo_row)
+
+        body.addWidget(self._sec_display)
+
+    def _build_tools_section(self):
+        body = self._sec_tools.body
+        body.setContentsMargins(8, 8, 8, 6)
+        body.setSpacing(5)
+
+        self._sync_cb = QCheckBox("Synchronize windows")
+        self._sync_cb.setChecked(True)
+        self._sync_cb.setStyleSheet("QCheckBox { color: #bbb; font-size: 12px; }")
+        self._sync_cb.toggled.connect(self.sync_toggled)
+        body.addWidget(self._sync_cb)
 
         body.addWidget(_sep())
         self._placeholder_lbls = []
@@ -390,50 +477,26 @@ class Sidebar(QWidget):
 
         self._indiv_list = QListWidget()
         self._indiv_list.setUniformItemSizes(True)
-        self._indiv_list.setFixedHeight(220)
+        self._indiv_list.setFixedHeight(115)
+        self._indiv_list.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOn
+        )
         self._indiv_list.setStyleSheet("""
             QListWidget {
-                background: #141414; border: none;
+                background: #141414; border: 1px solid #2e2e2e;
                 color: #ccc; font-size: 12px;
             }
             QListWidget::item { padding: 3px 10px; border-bottom: 1px solid #1c1c1c; }
             QListWidget::item:selected { background: #147a3f; color: #fff; }
             QListWidget::item:hover:!selected { background: #1e1e1e; }
+            QScrollBar:vertical { background: #141414; width: 8px; border: none; }
+            QScrollBar::handle:vertical {
+                background: #3a3a3a; border-radius: 3px; min-height: 16px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
         """)
         self._indiv_list.currentRowChanged.connect(self._on_row_changed)
         body.addWidget(self._indiv_list)
-
-        nav = QWidget()
-        nav.setStyleSheet("background: #141414;")
-        nrow = QHBoxLayout(nav)
-        nrow.setContentsMargins(6, 3, 6, 4)
-        nrow.setSpacing(4)
-
-        btn_style = (
-            "QPushButton { background: #202020; color: #999; border: none;"
-            " border-radius: 3px; font-size: 12px; padding: 2px 6px; }"
-            "QPushButton:hover:enabled { background: #2c2c2c; color: #ddd; }"
-            "QPushButton:disabled { color: #3a3a3a; }"
-        )
-        self._prev_btn = QPushButton("◀")
-        self._prev_btn.setFixedWidth(28)
-        self._prev_btn.setStyleSheet(btn_style)
-        self._prev_btn.clicked.connect(self._go_prev)
-
-        self._counter = QLabel("— / —")
-        self._counter.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._counter.setStyleSheet("color: #888; font-size: 12px;")
-
-        self._next_btn = QPushButton("▶")
-        self._next_btn.setFixedWidth(28)
-        self._next_btn.setStyleSheet(btn_style)
-        self._next_btn.clicked.connect(self._go_next)
-
-        nrow.addWidget(self._prev_btn)
-        nrow.addWidget(self._counter, stretch=1)
-        nrow.addWidget(self._next_btn)
-        body.addWidget(nav)
-        self._refresh_nav(-1)
 
     # ── Animation ─────────────────────────────────────────────────────────────
 
@@ -532,6 +595,7 @@ class Sidebar(QWidget):
             cb.setEnabled(exists)
             cb.setChecked(exists and ft in loaded)
             cb.blockSignals(False)
+        self._update_file_count()
 
     def set_file_loaded(self, ft: str, loaded: bool):
         cb = self._file_checks.get(ft)
@@ -539,6 +603,7 @@ class Sidebar(QWidget):
             cb.blockSignals(True)
             cb.setChecked(loaded)
             cb.blockSignals(False)
+        self._update_file_count()
 
     def update_annotations(self, file_types: list[str]):
         self._build_annotations_section(file_types)
@@ -563,6 +628,10 @@ class Sidebar(QWidget):
         self._apply_btn.setEnabled(enabled and self._current_idx >= 0)
 
     # ── Internal ──────────────────────────────────────────────────────────────
+
+    def _update_file_count(self):
+        n = sum(1 for cb in self._file_checks.values() if cb.isChecked())
+        self._file_count_lbl.setText(f"{n} selected")
 
     def _set_all_sections(self, expanded: bool):
         for sec in (self._sec_file, self._sec_display, self._sec_tools,
