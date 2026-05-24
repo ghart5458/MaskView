@@ -9,6 +9,13 @@ from PyQt6.QtWidgets import QApplication
 from maskview.ui.main_window import MainWindow
 
 _DARK_INDICATOR_CSS = """
+    QToolTip {
+        background-color: #2d2d2d;
+        color: #ddd;
+        border: 1px solid #555;
+        padding: 4px 6px;
+        font-size: 12px;
+    }
     QCheckBox::indicator {
         width: 13px; height: 13px;
         border: 1.5px solid #555; border-radius: 2px; background: #252525;
