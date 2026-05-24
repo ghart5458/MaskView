@@ -7,7 +7,7 @@ from ..files.loader import compute_display_range, load_volume
 from ..files.resolver import (
     FILE_TYPE_LABELS, FILE_TYPE_ORDER, display_max, resolve_file,
 )
-from ..par.parser import Individual, parse_par
+from ..par.parser import Individual, parse_file
 from .multi_viewer import MultiViewer
 from .sidebar import Sidebar
 
@@ -173,7 +173,7 @@ class MainWindow(QMainWindow):
         self._preload_cache.clear()
         self._par_path = path
         self._sidebar.set_par_label(path)
-        self._individuals = parse_par(path)
+        self._individuals = parse_file(path)
         self._sidebar.load_individuals(self._individuals)
         if not self._individuals:
             return

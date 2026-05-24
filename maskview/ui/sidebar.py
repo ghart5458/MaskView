@@ -255,7 +255,7 @@ class Sidebar(QWidget):
         body.setContentsMargins(8, 8, 8, 6)
         body.setSpacing(4)
 
-        self._par_btn = QPushButton("Select PAR…")
+        self._par_btn = QPushButton("Select PAR / CSV…")
         self._par_btn.setStyleSheet(
             "QPushButton { background: #0f2a1a; color: #5fd49a; border: none;"
             " border-radius: 3px; padding: 5px 8px; font-size: 12px; }"
@@ -326,10 +326,13 @@ class Sidebar(QWidget):
         self._apply_btn = QPushButton("Load")
         self._apply_btn.setEnabled(False)
         self._apply_btn.setStyleSheet(
-            "QPushButton { background: #0f2a1a; color: #5fd49a; border: none;"
+            "QPushButton { background: #1a3d26; color: #5fd49a;"
+            " border: 1px solid #2e6e42;"
             " border-radius: 3px; padding: 5px 8px; font-size: 12px; }"
-            "QPushButton:hover:enabled { background: #147a3f; color: #fff; }"
-            "QPushButton:disabled { background: #1a1a1a; color: #3a3a3a; }"
+            "QPushButton:hover:enabled { background: #147a3f; color: #fff;"
+            " border-color: #3a8a52; }"
+            "QPushButton:disabled { background: #1a1a1a; color: #3a3a3a;"
+            " border: 1px solid #252525; }"
         )
         self._apply_btn.clicked.connect(self._on_apply)
         db.addWidget(self._apply_btn)
@@ -645,7 +648,8 @@ class Sidebar(QWidget):
 
     def _browse_par(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select PAR file", "", "PAR files (*.par);;All files (*)"
+            self, "Select PAR or CSV file", "",
+            "PAR / CSV files (*.par *.csv);;All files (*)"
         )
         if path:
             self.par_selected.emit(Path(path))
