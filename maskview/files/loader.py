@@ -2,6 +2,21 @@ from pathlib import Path
 import numpy as np
 
 
+class TurboVolume:
+    """Three orientation-specific strided views of one volume.
+
+    xy  — data[::step, :, :] — used when viewing XY planes (stride along Z)
+    xz  — data[:, ::step, :] — used when viewing XZ planes (stride along Y)
+    yz  — data[:, :, ::step] — used when viewing YZ planes (stride along X)
+
+    Each view has full in-plane resolution; only the scroll axis is compressed.
+    """
+    __slots__ = ("xy", "xz", "yz")
+
+    def __init__(self, xy: np.ndarray, xz: np.ndarray, yz: np.ndarray):
+        self.xy, self.xz, self.yz = xy, xz, yz
+
+
 _DTYPE_MAP: dict[str, type] = {
     'MET_UCHAR':  np.uint8,
     'MET_CHAR':   np.int8,
@@ -23,11 +38,16 @@ def parse_mhd(mhd_path: Path) -> dict[str, str]:
     return meta
 
 
-def load_volume(mhd_path: Path, use_memmap: bool = False) -> tuple[np.ndarray, dict[str, str]]:
+def load_volume(mhd_path: Path, use_memmap: bool = False,
+                turbo_step: int = 1) -> tuple[np.ndarray, dict[str, str]]:
     """Load an MHD/RAW volume. Returns (array with shape [z, y, x], mhd_metadata).
 
-    use_memmap=True reads slices on demand instead of loading the full file into RAM.
-    Useful on machines with limited memory; default is full load for speed.
+    turbo_step > 1: for external .raw files, uses memmap so only every Nth Z-slice
+    is read from disk (~4x faster over slow network drives).  XY in-plane resolution
+    is preserved; XZ/YZ cross-sections will have Z compressed.
+
+    use_memmap=True (non-turbo): maps the file without reading it; slices are paged
+    in on demand.
     """
     mhd_path = Path(mhd_path)
     meta = parse_mhd(mhd_path)
@@ -46,14 +66,22 @@ def load_volume(mhd_path: Path, use_memmap: bool = False) -> tuple[np.ndarray, d
                 break
         offset = raw_bytes.find(b'\n', idx) + 1
         data = np.frombuffer(raw_bytes[offset:], dtype=dtype).reshape(shape).copy()
-    else:
-        raw_path = mhd_path.parent / raw_name
-        if use_memmap:
-            data = np.memmap(raw_path, dtype=dtype, mode='r', shape=shape)
-        else:
-            data = np.fromfile(raw_path, dtype=dtype).reshape(shape)
+        if turbo_step > 1:
+            data = np.ascontiguousarray(
+                data[::turbo_step, ::turbo_step, ::turbo_step])
+        return data, meta
 
-    return data, meta
+    raw_path = mhd_path.parent / raw_name
+    if turbo_step > 1:
+        # memmap the file then copy every Nth voxel in all three dimensions.
+        # Z-stride is the main I/O saving (contiguous slice blocks); Y/X strides
+        # reduce array size in RAM and keep all three view orientations proportional.
+        mm = np.memmap(raw_path, dtype=dtype, mode='r', shape=shape)
+        return np.ascontiguousarray(
+            mm[::turbo_step, ::turbo_step, ::turbo_step]), meta
+    if use_memmap:
+        return np.memmap(raw_path, dtype=dtype, mode='r', shape=shape), meta
+    return np.fromfile(raw_path, dtype=dtype).reshape(shape), meta
 
 
 def compute_display_range(
