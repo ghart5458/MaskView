@@ -326,6 +326,10 @@ class _PanZoomView(QGraphicsView):
         self._is_panning = False
         self._ext_cursor: QPointF | None = None
 
+        # Required so mouseMoveEvent fires during hover (not just button-press)
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
+
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_start = event.pos()
@@ -339,14 +343,13 @@ class _PanZoomView(QGraphicsView):
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        sp = self.mapToScene(event.pos())
-        self.cursor_moved.emit(sp.x(), sp.y())
         if event.buttons() & Qt.MouseButton.LeftButton and self._drag_start is not None:
             delta = event.pos() - self._drag_start
             if not self._is_panning and (abs(delta.x()) > self._PAN_THRESHOLD
                                           or abs(delta.y()) > self._PAN_THRESHOLD):
                 self._is_panning = True
                 self.setCursor(Qt.CursorShape.ClosedHandCursor)
+                self.cursor_left.emit()  # clear marker in other panels while panning
             if self._is_panning and self._last_pos is not None:
                 move = event.pos() - self._last_pos
                 self.horizontalScrollBar().setValue(
@@ -358,6 +361,8 @@ class _PanZoomView(QGraphicsView):
             self._last_pos = event.pos()
             event.accept()
         else:
+            sp = self.mapToScene(event.pos())
+            self.cursor_moved.emit(sp.x(), sp.y())
             super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
@@ -405,11 +410,15 @@ class _PanZoomView(QGraphicsView):
         super().drawForeground(painter, rect)
         if self._ext_cursor is None:
             return
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         x, y = self._ext_cursor.x(), self._ext_cursor.y()
-        pen = QPen(QColor(255, 220, 0, 180), 0)
+        arm = 12 / max(self.transform().m11(), 0.001)
+        pen = QPen(QColor(0, 210, 255, 255))
+        pen.setCosmetic(True)
+        pen.setWidthF(1.5)
         painter.setPen(pen)
-        painter.drawLine(QPointF(rect.left(), y), QPointF(rect.right(), y))
-        painter.drawLine(QPointF(x, rect.top()), QPointF(x, rect.bottom()))
+        painter.drawLine(QPointF(x - arm, y), QPointF(x + arm, y))
+        painter.drawLine(QPointF(x, y - arm), QPointF(x, y + arm))
 
     def _next_zoom(self, direction: int) -> float:
         """Return the next discrete zoom level up (+1) or down (-1) from current."""

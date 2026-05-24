@@ -73,12 +73,18 @@ def load_volume(mhd_path: Path, use_memmap: bool = False,
 
     raw_path = mhd_path.parent / raw_name
     if turbo_step > 1:
-        # memmap the file then copy every Nth voxel in all three dimensions.
-        # Z-stride is the main I/O saving (contiguous slice blocks); Y/X strides
-        # reduce array size in RAM and keep all three view orientations proportional.
-        mm = np.memmap(raw_path, dtype=dtype, mode='r', shape=shape)
-        return np.ascontiguousarray(
-            mm[::turbo_step, ::turbo_step, ::turbo_step]), meta
+        # Seek to each selected Z-slice and read it in one large sequential call.
+        # Sequential reads are what network drives optimise for; strided memmap
+        # access causes fragmented page faults that are slower than reading more
+        # data sequentially. Y/X downsampling happens in RAM after the reads.
+        slice_bytes = shape[1] * shape[2] * np.dtype(dtype).itemsize
+        z_range = range(0, shape[0], turbo_step)
+        buf = np.empty((len(z_range), shape[1], shape[2]), dtype=dtype)
+        with open(raw_path, 'rb') as f:
+            for i, z in enumerate(z_range):
+                f.seek(z * slice_bytes)
+                buf[i] = np.frombuffer(f.read(slice_bytes), dtype=dtype).reshape(shape[1], shape[2])
+        return np.ascontiguousarray(buf[:, ::turbo_step, ::turbo_step]), meta
     if use_memmap:
         return np.memmap(raw_path, dtype=dtype, mode='r', shape=shape), meta
     return np.fromfile(raw_path, dtype=dtype).reshape(shape), meta

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from PyQt6.QtCore import QThread, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QHBoxLayout, QMainWindow, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QVBoxLayout, QWidget
 
 from ..files.loader import compute_display_range, load_volume
 from ..files.resolver import (
@@ -12,7 +12,8 @@ from .multi_viewer import MultiViewer
 from .sidebar import Sidebar
 
 _DEFAULT_FILE_TYPES = ["original", "maskseg"]
-_PRELOAD_AHEAD      = 2   # how many individuals to pre-load after the current one
+_PRELOAD_AHEAD      = 2   # individuals to pre-load after current
+_PRELOAD_BEHIND     = 1   # individuals to pre-load before current
 
 
 # ── Background loader ─────────────────────────────────────────────────────────
@@ -112,6 +113,7 @@ class MainWindow(QMainWindow):
         # Pre-load cache: {individual_idx: {file_type: (data, lo, hi)}}
         self._preload_cache: dict[int, dict[str, tuple]] = {}
         self._preloaders: list[_PreloaderThread] = []
+        self._zombie_preloaders: list[_PreloaderThread] = []  # stopped but still running
 
         self._setup_ui()
 
@@ -122,13 +124,27 @@ class MainWindow(QMainWindow):
         self._sidebar = Sidebar()
         self._viewer = MultiViewer()
 
-        container = QWidget()
-        container.setStyleSheet("background: #111;")
-        hbox = QHBoxLayout(container)
+        content = QWidget()
+        hbox = QHBoxLayout(content)
         hbox.setContentsMargins(0, 0, 0, 0)
         hbox.setSpacing(0)
         hbox.addWidget(self._sidebar)
         hbox.addWidget(self._viewer, stretch=1)
+
+        self._current_label = QLabel("No file loaded")
+        self._current_label.setFixedHeight(22)
+        self._current_label.setStyleSheet(
+            "color: #999; font-size: 11px; padding: 0 10px;"
+            " background: #1a1a1a; border-top: 1px solid #2d2d2d;"
+        )
+
+        container = QWidget()
+        container.setStyleSheet("background: #111;")
+        vbox = QVBoxLayout(container)
+        vbox.setContentsMargins(0, 0, 0, 0)
+        vbox.setSpacing(0)
+        vbox.addWidget(content, stretch=1)
+        vbox.addWidget(self._current_label)
         self.setCentralWidget(container)
 
         self._sidebar.open_now()  # start open — no PAR loaded yet
@@ -169,13 +185,16 @@ class MainWindow(QMainWindow):
         default_checked = {ft for ft in self._session_types if available.get(ft)}
         self._sidebar.update_file_availability(available, default_checked)
         self._sidebar.select_individual_silent(0)
+        self._update_current_label()
 
     # ── Navigation ────────────────────────────────────────────────────────────
 
     def _on_individual_selected(self, idx: int):
         if idx == self._current_idx and self._loading:
             return
+        self._save_current_to_cache(next_idx=idx)
         self._current_idx = idx
+        self._update_current_label()
         ind = self._individuals[idx]
 
         available = {ft: (resolve_file(ind, ft) is not None) for ft in FILE_TYPE_ORDER}
@@ -201,18 +220,42 @@ class MainWindow(QMainWindow):
             else:
                 self._sidebar.set_controls_enabled(True)
                 QTimer.singleShot(0, self._viewer.sync_all)
+                QTimer.singleShot(200, lambda: self._start_preload(idx))
 
             self._sidebar.update_annotations([p.file_type for p in self._viewer.panels])
         else:
             self._start_load(ind, to_load)
 
-        # Queue pre-loading of the next few individuals
-        QTimer.singleShot(300, lambda: self._start_preload(idx))
+    def _save_current_to_cache(self, next_idx: int):
+        """Snapshot current viewer data into the preload cache before navigating away."""
+        cur = self._current_idx
+        if cur < 0 or cur in self._preload_cache or self._loading:
+            return
+        entry = {
+            p.file_type: (p.viewer.data, *p.viewer.display_range)
+            for p in self._viewer.panels
+            if p.viewer.data is not None
+        }
+        if not entry:
+            return
+        self._preload_cache[cur] = entry
+        max_cached = _PRELOAD_AHEAD + _PRELOAD_BEHIND + 1
+        if len(self._preload_cache) > max_cached:
+            farthest = max(self._preload_cache, key=lambda k: abs(k - next_idx))
+            del self._preload_cache[farthest]
+
+    def _update_current_label(self):
+        if self._current_idx < 0 or not self._individuals:
+            self._current_label.setText("No file loaded")
+            return
+        ind = self._individuals[self._current_idx]
+        self._current_label.setText(f"Current:  {ind.oldname}")
 
     # ── Loading ───────────────────────────────────────────────────────────────
 
     def _start_load(self, ind: Individual, file_types: list[str]):
         self._cancel_loader()
+        self._cancel_preloaders()
         self._viewer.clear()
         self._sidebar.update_annotations([])
         self._launch_loader(ind, file_types)
@@ -254,16 +297,18 @@ class MainWindow(QMainWindow):
         self._loading = False
         self._sidebar.set_controls_enabled(True)
         self._loader = None
-        # Defer sync so it runs after all pending fit_to_view timers fire
         QTimer.singleShot(0, self._viewer.sync_all)
+        QTimer.singleShot(200, lambda: self._start_preload(self._current_idx))
 
     # ── Pre-loading ───────────────────────────────────────────────────────────
 
-    def _start_preload(self, after_idx: int):
-        """Pre-load the next _PRELOAD_AHEAD individuals into cache."""
+    def _start_preload(self, current_idx: int):
+        """Pre-load adjacent individuals into cache (forward and backward)."""
         self._cancel_preloaders()
-        end = min(after_idx + _PRELOAD_AHEAD + 1, len(self._individuals))
-        for i in range(after_idx + 1, end):
+        n = len(self._individuals)
+        forward  = range(current_idx + 1, min(current_idx + _PRELOAD_AHEAD + 1, n))
+        backward = range(max(0, current_idx - _PRELOAD_BEHIND), current_idx)
+        for i in list(forward) + list(backward):
             if i in self._preload_cache:
                 continue
             ind = self._individuals[i]
@@ -277,22 +322,26 @@ class MainWindow(QMainWindow):
             self._preloaders.append(loader)
 
     def _cancel_preloaders(self):
+        # Reap previously stopped threads that have now finished
+        self._zombie_preloaders = [l for l in self._zombie_preloaders if l.isRunning()]
         for loader in self._preloaders:
             try:
                 loader.chunk_ready.disconnect()
             except RuntimeError:
                 pass
             loader.stop()
+        # Move to zombie list — keeps Python reference alive until thread exits
+        self._zombie_preloaders.extend(self._preloaders)
         self._preloaders.clear()
 
     def _on_preload_chunk(self, idx: int, ft: str, data: object, lo: float, hi: float):
         if idx not in self._preload_cache:
             self._preload_cache[idx] = {}
         self._preload_cache[idx][ft] = (data, lo, hi)
-        # Keep cache bounded to avoid unbounded memory use
-        if len(self._preload_cache) > _PRELOAD_AHEAD + 1:
-            oldest = next(iter(self._preload_cache))
-            del self._preload_cache[oldest]
+        max_cached = _PRELOAD_AHEAD + _PRELOAD_BEHIND + 1
+        if len(self._preload_cache) > max_cached:
+            farthest = max(self._preload_cache, key=lambda k: abs(k - self._current_idx))
+            del self._preload_cache[farthest]
 
     # ── File selection ────────────────────────────────────────────────────────
 

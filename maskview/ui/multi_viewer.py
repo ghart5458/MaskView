@@ -73,6 +73,7 @@ class MultiViewer(QWidget):
     def add_panel(self, file_type: str, data: np.ndarray,
                   lo: float, hi: float) -> ViewerPanel:
         panel = self.add_empty_panel(file_type)
+        panel.stop_loading()   # data is ready — no spinner needed
         panel.load(data, lo, hi)
         return panel
 
