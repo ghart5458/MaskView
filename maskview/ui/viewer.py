@@ -1,5 +1,5 @@
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QPoint
-from PyQt6.QtGui import QImage, QPainter, QPixmap, QWheelEvent, QMouseEvent
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QPoint, QPointF
+from PyQt6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QWheelEvent, QMouseEvent
 from PyQt6.QtWidgets import (
     QGraphicsPixmapItem,
     QGraphicsScene,
@@ -16,9 +16,11 @@ import numpy as np
 class VolumeViewer(QWidget):
     """Single-panel volume viewer: scrollable slices, click-to-zoom, drag-to-pan."""
 
-    slice_changed = pyqtSignal(int)
-    zoom_changed  = pyqtSignal(float)
-    pan_changed   = pyqtSignal(float, float)
+    slice_changed  = pyqtSignal(int)
+    zoom_changed   = pyqtSignal(float)
+    pan_changed    = pyqtSignal(float, float)
+    cursor_moved   = pyqtSignal(float, float)   # scene x, y
+    cursor_left    = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -47,6 +49,8 @@ class VolumeViewer(QWidget):
         self._view.zoom_changed.connect(self._on_view_zoom)
         self._view.pan_changed.connect(self.pan_changed)
         self._view.wheel_scroll.connect(self._on_wheel_scroll)
+        self._view.cursor_moved.connect(self.cursor_moved)
+        self._view.cursor_left.connect(self.cursor_left)
         layout.addWidget(self._view, stretch=1)
 
         bar_widget = QWidget()
@@ -62,7 +66,7 @@ class VolumeViewer(QWidget):
             }
             QSlider::handle:horizontal {
                 width: 14px; height: 14px; margin: -5px 0;
-                background: #8a8a8a; border-radius: 7px;
+                background: #8a8a8a; border-radius: 2px;
             }
             QSlider::handle:horizontal:hover { background: #bbb; }
             QSlider::sub-page:horizontal { background: #3a3a3a; border-radius: 2px; }
@@ -112,6 +116,12 @@ class VolumeViewer(QWidget):
     def set_pan(self, x: float, y: float):
         """Center viewport on scene point (x, y) without emitting pan_changed."""
         self._view.set_center(x, y)
+
+    def set_external_cursor(self, x: float, y: float):
+        self._view.set_external_cursor(x, y)
+
+    def clear_external_cursor(self):
+        self._view.clear_external_cursor()
 
     def set_display_range(self, lo: float, hi: float):
         self._display_lo = float(lo)
@@ -268,9 +278,11 @@ class _PanZoomView(QGraphicsView):
     Scroll wheel          → slice navigation (forwarded to VolumeViewer)
     """
 
-    zoom_changed = pyqtSignal(float)
-    pan_changed  = pyqtSignal(float, float)
-    wheel_scroll = pyqtSignal(int)
+    zoom_changed  = pyqtSignal(float)
+    pan_changed   = pyqtSignal(float, float)
+    wheel_scroll  = pyqtSignal(int)
+    cursor_moved  = pyqtSignal(float, float)   # scene x, y
+    cursor_left   = pyqtSignal()
 
     # Discrete zoom levels matching FIJI's sequence
     _ZOOM_LEVELS = (
@@ -312,6 +324,7 @@ class _PanZoomView(QGraphicsView):
         self._drag_start: QPoint | None = None
         self._last_pos: QPoint | None = None
         self._is_panning = False
+        self._ext_cursor: QPointF | None = None
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -326,6 +339,8 @@ class _PanZoomView(QGraphicsView):
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
+        sp = self.mapToScene(event.pos())
+        self.cursor_moved.emit(sp.x(), sp.y())
         if event.buttons() & Qt.MouseButton.LeftButton and self._drag_start is not None:
             delta = event.pos() - self._drag_start
             if not self._is_panning and (abs(delta.x()) > self._PAN_THRESHOLD
@@ -372,6 +387,29 @@ class _PanZoomView(QGraphicsView):
     def set_center(self, x: float, y: float):
         """Pan so that scene point (x, y) is at the viewport center."""
         self.centerOn(x, y)
+
+    def leaveEvent(self, event):
+        self.cursor_left.emit()
+        super().leaveEvent(event)
+
+    def set_external_cursor(self, x: float, y: float):
+        self._ext_cursor = QPointF(x, y)
+        self.viewport().update()
+
+    def clear_external_cursor(self):
+        if self._ext_cursor is not None:
+            self._ext_cursor = None
+            self.viewport().update()
+
+    def drawForeground(self, painter, rect):
+        super().drawForeground(painter, rect)
+        if self._ext_cursor is None:
+            return
+        x, y = self._ext_cursor.x(), self._ext_cursor.y()
+        pen = QPen(QColor(255, 220, 0, 180), 0)
+        painter.setPen(pen)
+        painter.drawLine(QPointF(rect.left(), y), QPointF(rect.right(), y))
+        painter.drawLine(QPointF(x, rect.top()), QPointF(x, rect.bottom()))
 
     def _next_zoom(self, direction: int) -> float:
         """Return the next discrete zoom level up (+1) or down (-1) from current."""
