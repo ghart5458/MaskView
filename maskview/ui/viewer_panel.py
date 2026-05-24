@@ -20,21 +20,21 @@ class ViewerPanel(QWidget):
 
         title_bar = QWidget()
         title_bar.setObjectName("titleBar")
-        title_bar.setFixedHeight(28)
+        title_bar.setFixedHeight(30)
         title_bar.setStyleSheet("#titleBar { background: #2d2d2d; }")
         bar = QHBoxLayout(title_bar)
         bar.setContentsMargins(8, 3, 4, 3)
 
         self._label = QLabel(FILE_TYPE_LABELS.get(file_type, file_type))
         self._label.setStyleSheet(
-            "color: #dddddd; font-weight: bold; font-size: 11px; background: transparent;"
+            "color: #dddddd; font-weight: bold; font-size: 12px; background: transparent;"
         )
         bar.addWidget(self._label, stretch=1)
 
         close_btn = QPushButton("✕")
-        close_btn.setFixedSize(18, 18)
+        close_btn.setFixedSize(20, 20)
         close_btn.setStyleSheet(
-            "QPushButton { color: #aaa; border: none; font-size: 10px; background: transparent; }"
+            "QPushButton { color: #aaa; border: none; font-size: 11px; background: transparent; }"
             "QPushButton:hover { color: white; background: #c0392b; border-radius: 3px; }"
         )
         close_btn.clicked.connect(self.closed)

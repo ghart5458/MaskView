@@ -45,18 +45,34 @@ class VolumeViewer(QWidget):
         self._view.wheel_scroll.connect(self._on_wheel_scroll)
         layout.addWidget(self._view, stretch=1)
 
-        bar = QHBoxLayout()
+        bar_widget = QWidget()
+        bar_widget.setContentsMargins(0, 0, 0, 0)
+        bar_widget.setFixedHeight(28)
+        bar = QHBoxLayout(bar_widget)
+        bar.setContentsMargins(4, 4, 4, 4)
         self._slider = QSlider(Qt.Orientation.Horizontal)
         self._slider.setMinimum(0)
+        self._slider.setStyleSheet("""
+            QSlider::groove:horizontal {
+                height: 4px; background: #2a2a2a; border-radius: 2px;
+            }
+            QSlider::handle:horizontal {
+                width: 14px; height: 14px; margin: -5px 0;
+                background: #8a8a8a; border-radius: 7px;
+            }
+            QSlider::handle:horizontal:hover { background: #bbb; }
+            QSlider::sub-page:horizontal { background: #3a3a3a; border-radius: 2px; }
+        """)
         self._slider.valueChanged.connect(self._on_slider_changed)
         bar.addWidget(self._slider, stretch=1)
 
         self._info = QLabel("—")
-        self._info.setFixedWidth(130)
+        self._info.setFixedWidth(140)
         self._info.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._info.setStyleSheet("color: #aaa; font-size: 12px;")
         bar.addWidget(self._info)
 
-        layout.addLayout(bar)
+        layout.addWidget(bar_widget)
 
     def load(self, data: np.ndarray, display_lo: float, display_hi: float):
         self._data = data

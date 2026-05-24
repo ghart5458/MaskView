@@ -99,7 +99,7 @@ class MainWindow(QMainWindow):
         sb = self.statusBar()
         sb.setStyleSheet("QStatusBar { background: #111; border-top: 1px solid #222; }")
         self._status_label = QLabel()
-        self._status_label.setStyleSheet("color: #777; font-size: 11px; padding: 0 8px;")
+        self._status_label.setStyleSheet("color: #777; font-size: 12px; padding: 0 8px;")
         self._status_prog = QProgressBar()
         self._status_prog.setFixedWidth(160)
         self._status_prog.setFixedHeight(10)

@@ -27,7 +27,7 @@ def _sep() -> QFrame:
 def _mini_label(text: str) -> QLabel:
     lbl = QLabel(text)
     lbl.setStyleSheet(
-        "color: #888; font-size: 9px; font-weight: bold;"
+        "color: #888; font-size: 12px; font-weight: bold;"
         " letter-spacing: 1px; padding: 4px 0 2px 0;"
     )
     return lbl
@@ -44,7 +44,7 @@ class _Section(QWidget):
         layout.setSpacing(0)
 
         self._hdr = QWidget()
-        self._hdr.setFixedHeight(26)
+        self._hdr.setFixedHeight(28)
         self._hdr.setStyleSheet(
             "QWidget { background: #1f1f1f; }"
             "QWidget:hover { background: #242424; }"
@@ -55,12 +55,12 @@ class _Section(QWidget):
         hrow.setSpacing(6)
 
         self._arrow = QLabel("▾" if expanded else "▸")
-        self._arrow.setStyleSheet("color: #777; font-size: 10px;")
+        self._arrow.setStyleSheet("color: #777; font-size: 12px;")
         self._arrow.setFixedWidth(10)
 
         self._title_lbl = QLabel(title.upper())
         self._title_lbl.setStyleSheet(
-            "color: #999; font-size: 9px; font-weight: bold; letter-spacing: 1px;"
+            "color: #999; font-size: 12px; font-weight: bold; letter-spacing: 1px;"
         )
         hrow.addWidget(self._arrow)
         hrow.addWidget(self._title_lbl, stretch=1)
@@ -129,7 +129,7 @@ class Sidebar(QWidget):
         icon = QLabel("☰")
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon.setStyleSheet(
-            "color: #2ce67f; font-size: 13px;"
+            "color: #2ce67f; font-size: 14px;"
             " background: transparent; border: none;"
         )
         self._icon_lbl = icon
@@ -176,6 +176,31 @@ class Sidebar(QWidget):
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(0)
 
+        # Collapse all / Expand all
+        ca_row = QWidget()
+        ca_row.setStyleSheet("background: #111;")
+        ca_layout = QHBoxLayout(ca_row)
+        ca_layout.setContentsMargins(8, 4, 8, 4)
+        ca_layout.setSpacing(6)
+        _ca_style = (
+            "QPushButton { background: transparent; color: #888; border: none;"
+            " font-size: 12px; padding: 0; }"
+            "QPushButton:hover { color: #bbb; }"
+        )
+        btn_collapse = QPushButton("collapse all")
+        btn_collapse.setStyleSheet(_ca_style)
+        btn_collapse.clicked.connect(lambda: self._set_all_sections(False))
+        btn_expand = QPushButton("expand all")
+        btn_expand.setStyleSheet(_ca_style)
+        btn_expand.clicked.connect(lambda: self._set_all_sections(True))
+        ca_layout.addWidget(btn_collapse)
+        _div = QLabel("|")
+        _div.setStyleSheet("color: #444; font-size: 12px;")
+        ca_layout.addWidget(_div)
+        ca_layout.addWidget(btn_expand)
+        ca_layout.addStretch()
+        col.addWidget(ca_row)
+
         self._sec_file  = _Section("File",        expanded=True)
         self._sec_tools = _Section("Tools",       expanded=True)
         self._sec_annot = _Section("Annotations", expanded=True)
@@ -195,13 +220,13 @@ class Sidebar(QWidget):
 
     def _build_file_section(self):
         body = self._sec_file.body
-        body.setContentsMargins(8, 6, 8, 4)
-        body.setSpacing(3)
+        body.setContentsMargins(8, 8, 8, 6)
+        body.setSpacing(4)
 
         self._par_btn = QPushButton("Select PAR…")
         self._par_btn.setStyleSheet(
             "QPushButton { background: #0f2a1a; color: #5fd49a; border: none;"
-            " border-radius: 3px; padding: 5px 8px; font-size: 11px; }"
+            " border-radius: 3px; padding: 5px 8px; font-size: 12px; }"
             "QPushButton:hover { background: #147a3f; color: #fff; }"
         )
         self._par_btn.clicked.connect(self._browse_par)
@@ -209,43 +234,42 @@ class Sidebar(QWidget):
 
         self._par_label = QLabel("No file loaded")
         self._par_label.setStyleSheet(
-            "color: #666; font-size: 10px; font-style: italic; padding: 1px 0;"
+            "color: #666; font-size: 12px; font-style: italic; padding: 1px 0;"
         )
         self._par_label.setWordWrap(True)
         body.addWidget(self._par_label)
 
         body.addWidget(_sep())
         self._sec_display = _Section("Display", expanded=True)
-        self._sec_display.body.setContentsMargins(8, 4, 8, 6)
-        self._sec_display.body.setSpacing(3)
+        self._sec_display.body.setContentsMargins(8, 6, 8, 8)
+        self._sec_display.body.setSpacing(4)
         for ft in FILE_TYPE_ORDER:
             cb = QCheckBox(FILE_TYPE_LABELS[ft])
             cb.setEnabled(False)
             cb.setStyleSheet(
-                "QCheckBox { color: #888; font-size: 11px; padding: 1px 0; }"
+                "QCheckBox { color: #888; font-size: 12px; padding: 1px 0; }"
                 "QCheckBox:enabled { color: #ccc; }"
                 "QCheckBox:disabled { color: #4a4a4a; }"
             )
             self._file_checks[ft] = cb
             self._sec_display.body.addWidget(cb)
-        body.addWidget(self._sec_display)
-
-        body.addWidget(_sep())
+        self._sec_display.body.addWidget(_sep())
         self._apply_btn = QPushButton("Update")
         self._apply_btn.setEnabled(False)
         self._apply_btn.setStyleSheet(
             "QPushButton { background: #0f2a1a; color: #5fd49a; border: none;"
-            " border-radius: 3px; padding: 5px 8px; font-size: 11px; }"
+            " border-radius: 3px; padding: 5px 8px; font-size: 12px; }"
             "QPushButton:hover:enabled { background: #147a3f; color: #fff; }"
             "QPushButton:disabled { background: #1a1a1a; color: #3a3a3a; }"
         )
         self._apply_btn.clicked.connect(self._on_apply)
-        body.addWidget(self._apply_btn)
+        self._sec_display.body.addWidget(self._apply_btn)
+        body.addWidget(self._sec_display)
 
     def _build_tools_section(self):
         body = self._sec_tools.body
-        body.setContentsMargins(8, 6, 8, 4)
-        body.setSpacing(4)
+        body.setContentsMargins(8, 8, 8, 6)
+        body.setSpacing(5)
 
         body.addWidget(_mini_label("ORIENTATION"))
         orient_row = QWidget()
@@ -256,7 +280,7 @@ class Sidebar(QWidget):
         for text in ("XY", "XZ", "YZ"):
             rb = QRadioButton(text)
             rb.setChecked(text == "XY")
-            rb.setStyleSheet("QRadioButton { color: #bbb; font-size: 11px; }")
+            rb.setStyleSheet("QRadioButton { color: #bbb; font-size: 12px; }")
             rb.toggled.connect(
                 lambda chk, t=text: self.orientation_changed.emit(t) if chk else None
             )
@@ -275,7 +299,7 @@ class Sidebar(QWidget):
         for text in ("2×2", "4×1"):
             rb = QRadioButton(text)
             rb.setChecked(text == "2×2")
-            rb.setStyleSheet("QRadioButton { color: #bbb; font-size: 11px; }")
+            rb.setStyleSheet("QRadioButton { color: #bbb; font-size: 12px; }")
             rb.toggled.connect(
                 lambda chk, t=text: self.layout_changed.emit(t) if chk else None
             )
@@ -287,23 +311,23 @@ class Sidebar(QWidget):
         body.addWidget(_sep())
         self._sync_cb = QCheckBox("Synchronize windows")
         self._sync_cb.setChecked(True)
-        self._sync_cb.setStyleSheet("QCheckBox { color: #bbb; font-size: 11px; }")
+        self._sync_cb.setStyleSheet("QCheckBox { color: #bbb; font-size: 12px; }")
         self._sync_cb.toggled.connect(self.sync_toggled)
         body.addWidget(self._sync_cb)
 
         body.addWidget(_sep())
         self._placeholder_lbls = []
-        for placeholder in ("Threshold", "Color overlay", "Tagging"):
+        for placeholder in ("Color overlay", "Tagging"):
             lbl = QLabel(placeholder)
-            lbl.setStyleSheet("color: #4a4a4a; font-size: 11px; padding: 1px 0;")
+            lbl.setStyleSheet("color: #4a4a4a; font-size: 12px; padding: 1px 0;")
             self._placeholder_lbls.append(lbl)
             body.addWidget(lbl)
 
 
     def _build_annotations_section(self, file_types: list[str]):
         body = self._sec_annot.body
-        body.setContentsMargins(8, 6, 8, 4)
-        body.setSpacing(3)
+        body.setContentsMargins(8, 8, 8, 6)
+        body.setSpacing(4)
 
         while body.count():
             item = body.takeAt(0)
@@ -313,7 +337,7 @@ class Sidebar(QWidget):
 
         if not file_types:
             lbl = QLabel("No panels open")
-            lbl.setStyleSheet("color: #666; font-size: 10px;")
+            lbl.setStyleSheet("color: #666; font-size: 12px;")
             body.addWidget(lbl)
             return
 
@@ -325,7 +349,7 @@ class Sidebar(QWidget):
             rrow.setSpacing(3)
 
             lbl = QLabel(FILE_TYPE_LABELS.get(ft, ft))
-            lbl.setStyleSheet("color: #aaa; font-size: 10px;")
+            lbl.setStyleSheet("color: #aaa; font-size: 12px;")
             rrow.addWidget(lbl, stretch=1)
 
             group = QButtonGroup(row_w)
@@ -336,7 +360,7 @@ class Sidebar(QWidget):
                 btn.setFixedHeight(18)
                 btn.setStyleSheet(
                     "QPushButton { background: #252525; color: #888; border: none;"
-                    f" border-radius: 2px; font-size: 9px; padding: 0 5px; }}"
+                    f" border-radius: 2px; font-size: 12px; padding: 0 5px; }}"
                     f"QPushButton:checked {{ background: {color}; color: #ddd; }}"
                     "QPushButton:hover:!checked { background: #2e2e2e; color: #aaa; }"
                 )
@@ -357,7 +381,7 @@ class Sidebar(QWidget):
         self._indiv_list.setStyleSheet("""
             QListWidget {
                 background: #141414; border: none;
-                color: #ccc; font-size: 10px;
+                color: #ccc; font-size: 12px;
             }
             QListWidget::item { padding: 3px 10px; border-bottom: 1px solid #1c1c1c; }
             QListWidget::item:selected { background: #147a3f; color: #fff; }
@@ -374,7 +398,7 @@ class Sidebar(QWidget):
 
         btn_style = (
             "QPushButton { background: #202020; color: #999; border: none;"
-            " border-radius: 3px; font-size: 10px; padding: 2px 6px; }"
+            " border-radius: 3px; font-size: 12px; padding: 2px 6px; }"
             "QPushButton:hover:enabled { background: #2c2c2c; color: #ddd; }"
             "QPushButton:disabled { color: #3a3a3a; }"
         )
@@ -385,7 +409,7 @@ class Sidebar(QWidget):
 
         self._counter = QLabel("— / —")
         self._counter.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._counter.setStyleSheet("color: #888; font-size: 10px;")
+        self._counter.setStyleSheet("color: #888; font-size: 12px;")
 
         self._next_btn = QPushButton("▶")
         self._next_btn.setFixedWidth(28)
@@ -510,12 +534,12 @@ class Sidebar(QWidget):
         if path is None:
             self._par_label.setText("No file loaded")
             self._par_label.setStyleSheet(
-                "color: #666; font-size: 10px; font-style: italic; padding: 1px 0;"
+                "color: #666; font-size: 12px; font-style: italic; padding: 1px 0;"
             )
         else:
             self._par_label.setText(path.name)
             self._par_label.setStyleSheet(
-                "color: #aaa; font-size: 10px; font-style: normal; padding: 1px 0;"
+                "color: #aaa; font-size: 12px; font-style: normal; padding: 1px 0;"
             )
 
     def set_controls_enabled(self, enabled: bool):
@@ -529,6 +553,12 @@ class Sidebar(QWidget):
         self._apply_btn.setEnabled(enabled and self._current_idx >= 0)
 
     # ── Internal ──────────────────────────────────────────────────────────────
+
+    def _set_all_sections(self, expanded: bool):
+        for sec in (self._sec_file, self._sec_display, self._sec_tools,
+                    self._sec_annot, self._sec_indiv):
+            if sec._expanded != expanded:
+                sec._toggle()
 
     def _on_apply(self):
         selected = [ft for ft, cb in self._file_checks.items() if cb.isChecked()]
