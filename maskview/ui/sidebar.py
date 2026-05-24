@@ -80,26 +80,6 @@ class _Section(QWidget):
         self._body.setVisible(self._expanded)
         self._arrow.setText("▾" if self._expanded else "▸")
 
-    def set_theme(self, mode: str):
-        if mode == "light":
-            self._hdr.setStyleSheet(
-                "QWidget { background: #e0e0e0; } QWidget:hover { background: #d8d8d8; }"
-            )
-            self._arrow.setStyleSheet("color: #555; font-size: 10px;")
-            self._title_lbl.setStyleSheet(
-                "color: #333; font-size: 9px; font-weight: bold; letter-spacing: 1px;"
-            )
-            self._body.setStyleSheet("background: #f0f0f0;")
-        else:
-            self._hdr.setStyleSheet(
-                "QWidget { background: #1f1f1f; } QWidget:hover { background: #242424; }"
-            )
-            self._arrow.setStyleSheet("color: #777; font-size: 10px;")
-            self._title_lbl.setStyleSheet(
-                "color: #999; font-size: 9px; font-weight: bold; letter-spacing: 1px;"
-            )
-            self._body.setStyleSheet("background: #181818;")
-
     @property
     def body(self) -> QVBoxLayout:
         return self._body_layout
@@ -114,7 +94,6 @@ class Sidebar(QWidget):
     layout_changed      = pyqtSignal(str)
     sync_toggled        = pyqtSignal(bool)
     individual_selected = pyqtSignal(int)
-    theme_changed       = pyqtSignal(str)       # "dark" | "light"
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -124,7 +103,6 @@ class Sidebar(QWidget):
         self._file_available: dict[str, bool] = {}
         self._annot_groups: dict[str, QButtonGroup] = {}
         self._is_open = False
-        self._current_theme = "dark"
 
         self._setup_ui()
         self._setup_animation()
@@ -321,17 +299,6 @@ class Sidebar(QWidget):
             self._placeholder_lbls.append(lbl)
             body.addWidget(lbl)
 
-        body.addWidget(_sep())
-        self._theme_btn = QPushButton("☀  Light mode")
-        self._theme_btn.setCheckable(True)
-        self._theme_btn.setStyleSheet(
-            "QPushButton { background: #252525; color: #bbb; border: 1px solid #3a3a3a;"
-            " border-radius: 3px; padding: 4px 8px; font-size: 11px; text-align: left; }"
-            "QPushButton:checked { background: #1a2820; color: #2ce67f; border-color: #1ab864; }"
-            "QPushButton:hover { border-color: #555; }"
-        )
-        self._theme_btn.toggled.connect(self._on_theme_toggle)
-        body.addWidget(self._theme_btn)
 
     def _build_annotations_section(self, file_types: list[str]):
         body = self._sec_annot.body
@@ -566,112 +533,6 @@ class Sidebar(QWidget):
     def _on_apply(self):
         selected = [ft for ft, cb in self._file_checks.items() if cb.isChecked()]
         self.files_applied.emit(selected)
-
-    def _on_theme_toggle(self, checked: bool):
-        self._theme_btn.setText("☾  Dark mode" if checked else "☀  Light mode")
-        self._apply_theme("light" if checked else "dark")
-
-    def _apply_theme(self, mode: str):
-        self._current_theme = mode
-        dark = (mode == "dark")
-
-        if dark:
-            self._trigger.setStyleSheet(
-                "QWidget { background: #0d1a10; border-right: 2px solid #147a3f; }"
-            )
-            self._icon_lbl.setStyleSheet(
-                "color: #2ce67f; font-size: 13px; background: transparent; border: none;"
-            )
-            self._panel.setStyleSheet("background: #181818; border-right: 1px solid #2c2c2c;")
-            gbtn = (
-                "QPushButton { background: #0f2a1a; color: #5fd49a; border: none;"
-                " border-radius: 3px; padding: 5px 8px; font-size: 11px; }"
-                "QPushButton:hover:enabled { background: #147a3f; color: #fff; }"
-                "QPushButton:disabled { background: #1a1a1a; color: #3a3a3a; }"
-            )
-            cb_style = (
-                "QCheckBox { color: #888; font-size: 11px; padding: 1px 0; }"
-                "QCheckBox:enabled { color: #ccc; }"
-                "QCheckBox:disabled { color: #4a4a4a; }"
-            )
-            rb_col = "#bbb";  tool_col = "#bbb";  ph_col = "#4a4a4a"
-            list_style = (
-                "QListWidget { background: #141414; border: none; color: #ccc; font-size: 10px; }"
-                "QListWidget::item { padding: 3px 10px; border-bottom: 1px solid #1c1c1c; }"
-                "QListWidget::item:selected { background: #147a3f; color: #fff; }"
-                "QListWidget::item:hover:!selected { background: #1e1e1e; }"
-            )
-            nav_btn = (
-                "QPushButton { background: #202020; color: #999; border: none;"
-                " border-radius: 3px; font-size: 10px; padding: 2px 6px; }"
-                "QPushButton:hover:enabled { background: #2c2c2c; color: #ddd; }"
-                "QPushButton:disabled { color: #3a3a3a; }"
-            )
-            counter_col = "#888"
-        else:
-            self._trigger.setStyleSheet(
-                "QWidget { background: #e8f5ee; border-right: 2px solid #2ce67f; }"
-            )
-            self._icon_lbl.setStyleSheet(
-                "color: #147a3f; font-size: 13px; background: transparent; border: none;"
-            )
-            self._panel.setStyleSheet("background: #f5f5f5; border-right: 1px solid #d0d0d0;")
-            gbtn = (
-                "QPushButton { background: #d0eedd; color: #0a5c28; border: none;"
-                " border-radius: 3px; padding: 5px 8px; font-size: 11px; }"
-                "QPushButton:hover:enabled { background: #2ce67f; color: #000; }"
-                "QPushButton:disabled { background: #f0f0f0; color: #bbb; }"
-            )
-            cb_style = (
-                "QCheckBox { color: #666; font-size: 11px; padding: 1px 0; }"
-                "QCheckBox:enabled { color: #111; }"
-                "QCheckBox:disabled { color: #bbb; }"
-            )
-            rb_col = "#111";  tool_col = "#111";  ph_col = "#bbb"
-            list_style = (
-                "QListWidget { background: #fff; border: none; color: #111; font-size: 10px; }"
-                "QListWidget::item { padding: 3px 10px; border-bottom: 1px solid #e0e0e0; }"
-                "QListWidget::item:selected { background: #2ce67f; color: #000; }"
-                "QListWidget::item:hover:!selected { background: #f0f0f0; }"
-            )
-            nav_btn = (
-                "QPushButton { background: #e0e0e0; color: #333; border: none;"
-                " border-radius: 3px; font-size: 10px; padding: 2px 6px; }"
-                "QPushButton:hover:enabled { background: #d0d0d0; color: #111; }"
-                "QPushButton:disabled { color: #bbb; }"
-            )
-            counter_col = "#555"
-
-        for sec in (self._sec_file, self._sec_display, self._sec_tools, self._sec_annot, self._sec_indiv):
-            sec.set_theme(mode)
-        self._par_btn.setStyleSheet(gbtn)
-        self._apply_btn.setStyleSheet(gbtn)
-        for cb in self._file_checks.values():
-            cb.setStyleSheet(cb_style)
-        for rb in list(self._orient_group.buttons()) + list(self._layout_group.buttons()):
-            rb.setStyleSheet(f"QRadioButton {{ color: {rb_col}; font-size: 11px; }}")
-        self._sync_cb.setStyleSheet(f"QCheckBox {{ color: {tool_col}; font-size: 11px; }}")
-        if dark:
-            self._theme_btn.setStyleSheet(
-                "QPushButton { background: #252525; color: #bbb; border: 1px solid #3a3a3a;"
-                " border-radius: 3px; padding: 4px 8px; font-size: 11px; text-align: left; }"
-                "QPushButton:checked { background: #1a2820; color: #2ce67f; border-color: #1ab864; }"
-                "QPushButton:hover { border-color: #555; }"
-            )
-        else:
-            self._theme_btn.setStyleSheet(
-                "QPushButton { background: #e0e0e0; color: #333; border: 1px solid #ccc;"
-                " border-radius: 3px; padding: 4px 8px; font-size: 11px; text-align: left; }"
-                "QPushButton:checked { background: #d0eedd; color: #0a5c28; border-color: #2ce67f; }"
-                "QPushButton:hover { border-color: #aaa; }"
-            )
-        for lbl in self._placeholder_lbls:
-            lbl.setStyleSheet(f"color: {ph_col}; font-size: 11px; padding: 1px 0;")
-        self._indiv_list.setStyleSheet(list_style)
-        self._prev_btn.setStyleSheet(nav_btn)
-        self._next_btn.setStyleSheet(nav_btn)
-        self._counter.setStyleSheet(f"color: {counter_col}; font-size: 10px;")
-        self.theme_changed.emit(mode)
 
     def _browse_par(self):
         path, _ = QFileDialog.getOpenFileName(

@@ -1,8 +1,7 @@
 from pathlib import Path
 
 from PyQt6.QtCore import QThread, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QPalette
-from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLabel, QMainWindow, QProgressBar, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QProgressBar, QWidget
 
 from ..files.loader import compute_display_range, load_volume
 from ..files.resolver import (
@@ -88,7 +87,6 @@ class MainWindow(QMainWindow):
         # Wire sidebar signals
         self._sidebar.par_selected.connect(self._on_par_selected)
         self._sidebar.files_applied.connect(self._on_files_applied)
-        self._sidebar.theme_changed.connect(self._on_theme_changed)
         self._sidebar.orientation_changed.connect(self._viewer.set_orientation)
         self._sidebar.layout_changed.connect(self._viewer.set_layout_mode)
         self._sidebar.sync_toggled.connect(self._viewer.set_sync)
@@ -239,46 +237,3 @@ class MainWindow(QMainWindow):
         self._sidebar.set_file_loaded(ft, False)
         self._sidebar.update_annotations([p.file_type for p in self._viewer.panels])
 
-    # ── Theme ─────────────────────────────────────────────────────────────────
-
-    def _on_theme_changed(self, mode: str):
-        app = QApplication.instance()
-        if mode == "light":
-            app.setPalette(QApplication.style().standardPalette())
-            app.setStyleSheet(
-                "QCheckBox::indicator {"
-                " width: 13px; height: 13px; border: 1.5px solid #bbb;"
-                " border-radius: 2px; background: #fff; }"
-                "QCheckBox::indicator:checked { background: #2ce67f; border-color: #1ab864; }"
-                "QCheckBox::indicator:disabled { border-color: #ddd; background: #f5f5f5; }"
-                "QRadioButton::indicator {"
-                " width: 13px; height: 13px; border: 1.5px solid #bbb;"
-                " border-radius: 7px; background: #fff; }"
-                "QRadioButton::indicator:checked { background: #2ce67f; border-color: #1ab864; }"
-            )
-        else:
-            c = QColor
-            pal = app.palette()
-            pal.setColor(QPalette.ColorRole.Window,          c("#1a1a1a"))
-            pal.setColor(QPalette.ColorRole.WindowText,      c("#cccccc"))
-            pal.setColor(QPalette.ColorRole.Base,            c("#141414"))
-            pal.setColor(QPalette.ColorRole.AlternateBase,   c("#202020"))
-            pal.setColor(QPalette.ColorRole.Text,            c("#cccccc"))
-            pal.setColor(QPalette.ColorRole.Button,          c("#2a2a2a"))
-            pal.setColor(QPalette.ColorRole.ButtonText,      c("#cccccc"))
-            pal.setColor(QPalette.ColorRole.Highlight,       c("#147a3f"))
-            pal.setColor(QPalette.ColorRole.HighlightedText, c("#ffffff"))
-            app.setPalette(pal)
-            app.setStyleSheet(
-                "QCheckBox::indicator {"
-                " width: 13px; height: 13px; border: 1.5px solid #555;"
-                " border-radius: 2px; background: #252525; }"
-                "QCheckBox::indicator:hover   { border-color: #2ce67f; }"
-                "QCheckBox::indicator:checked { background: #2ce67f; border-color: #1ab864; }"
-                "QCheckBox::indicator:disabled { border-color: #2e2e2e; background: #181818; }"
-                "QRadioButton::indicator {"
-                " width: 13px; height: 13px; border: 1.5px solid #555;"
-                " border-radius: 7px; background: #252525; }"
-                "QRadioButton::indicator:hover   { border-color: #2ce67f; }"
-                "QRadioButton::indicator:checked { background: #2ce67f; border-color: #1ab864; }"
-            )
