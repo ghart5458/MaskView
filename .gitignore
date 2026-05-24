@@ -12,3 +12,5 @@ wheels/
 # Claude
 CLAUDE.md
 
+# Project-specific data
+reference/
