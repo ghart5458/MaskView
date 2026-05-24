@@ -57,6 +57,7 @@ class MultiViewer(QWidget):
         panel.closed.connect(lambda p=panel: self._remove_panel(p))
         self._panels.append(panel)
         self._rebuild_layout()
+        panel.start_loading()
         return panel
 
     def fill_panel(self, file_type: str, data: np.ndarray,
@@ -64,6 +65,7 @@ class MultiViewer(QWidget):
         """Load data into an existing placeholder panel. Returns False if not found."""
         for panel in self._panels:
             if panel.file_type == file_type:
+                panel.stop_loading()
                 panel.load(data, lo, hi)
                 return True
         return False
@@ -164,6 +166,8 @@ class MultiViewer(QWidget):
         v.slice_changed.connect(self._on_slice_changed)
         v.zoom_changed.connect(self._on_zoom_changed)
         v.pan_changed.connect(self._on_pan_changed)
+        v.cursor_moved.connect(self._on_cursor_moved)
+        v.cursor_left.connect(self._on_cursor_left)
 
     def _on_slice_changed(self, z: int):
         if not self._sync_enabled:
@@ -188,3 +192,17 @@ class MultiViewer(QWidget):
         for p in self._panels:
             if p.viewer is not src:
                 p.viewer.set_pan(x, y)
+
+    def _on_cursor_moved(self, x: float, y: float):
+        if not self._sync_enabled:
+            return
+        src = self.sender()
+        for p in self._panels:
+            if p.viewer is not src:
+                p.viewer.set_external_cursor(x, y)
+
+    def _on_cursor_left(self):
+        src = self.sender()
+        for p in self._panels:
+            if p.viewer is not src:
+                p.viewer.clear_external_cursor()

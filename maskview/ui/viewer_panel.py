@@ -107,10 +107,10 @@ class _HistCanvas(QWidget):
 
         # Axis ticks + labels at 0 %, 25 %, 50 %, 75 %, 100 %
         font = p.font()
-        font.setPointSize(7)
+        font.setPointSize(8)
         p.setFont(font)
         fm = p.fontMetrics()
-        p.setPen(QColor("#666"))
+        p.setPen(QColor("#999"))
         for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
             val   = d_min + frac * d_range
             x_pos = int(frac * (w - 1))
@@ -131,7 +131,7 @@ class _HistogramOverlay(QFrame):
         self.setObjectName("histOverlay")
         self.setStyleSheet(
             f"#histOverlay {{ background: {_OVERLAY_BG}; border: 1px solid {_OVERLAY_BORDER};"
-            " border-radius: 4px; }}"
+            f" border-radius: 4px; }}"
         )
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setFixedWidth(236)
@@ -144,7 +144,7 @@ class _HistogramOverlay(QFrame):
         layout.addWidget(self._canvas)
 
         self._full_stack_cb = QCheckBox("Full stack")
-        self._full_stack_cb.setStyleSheet("color: #aaa; font-size: 11px;")
+        self._full_stack_cb.setStyleSheet("color: #ccc; font-size: 12px;")
         self._full_stack_cb.setChecked(True)
         self._full_stack_cb.stateChanged.connect(self._draw)
         layout.addWidget(self._full_stack_cb)
@@ -207,7 +207,7 @@ class _ThresholdOverlay(QFrame):
         self.setObjectName("thrOverlay")
         self.setStyleSheet(
             f"#thrOverlay {{ background: {_OVERLAY_BG}; border: 1px solid {_OVERLAY_BORDER};"
-            " border-radius: 4px; }}"
+            f" border-radius: 4px; }}"
         )
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setFixedWidth(236)
@@ -227,10 +227,23 @@ class _ThresholdOverlay(QFrame):
         # Active toggle + color picker
         top_row = QHBoxLayout()
         top_row.setSpacing(6)
-        self._active_cb = QCheckBox("Show highlight")
-        self._active_cb.setStyleSheet("color: #ccc; font-size: 11px;")
-        self._active_cb.stateChanged.connect(lambda s: self.toggled.emit(bool(s)))
-        top_row.addWidget(self._active_cb, stretch=1)
+        hl_lbl = QLabel("Highlight")
+        hl_lbl.setStyleSheet("color: #ccc; font-size: 12px;")
+        top_row.addWidget(hl_lbl, stretch=1)
+
+        self._active_btn = QPushButton("OFF")
+        self._active_btn.setCheckable(True)
+        self._active_btn.setFixedSize(44, 22)
+        self._active_btn.setStyleSheet(
+            "QPushButton { background: #2a2a2a; color: #666; border: 1px solid #444;"
+            " border-radius: 3px; font-size: 11px; font-weight: bold; }"
+            "QPushButton:checked { background: #0d3320; color: #2ce67f;"
+            " border-color: #147a3f; }"
+            "QPushButton:hover:!checked { background: #333; }"
+            "QPushButton:hover:checked { background: #144a28; }"
+        )
+        self._active_btn.toggled.connect(self._on_active_toggled)
+        top_row.addWidget(self._active_btn)
 
         self._color_btn = QPushButton()
         self._color_btn.setFixedSize(22, 22)
@@ -244,7 +257,7 @@ class _ThresholdOverlay(QFrame):
             QSlider::groove:horizontal { height: 4px; background: #2a2a2a; border-radius: 2px; }
             QSlider::handle:horizontal {
                 width: 14px; height: 14px; margin: -5px 0;
-                background: #8a8a8a; border-radius: 7px;
+                background: #8a8a8a; border-radius: 2px;
             }
             QSlider::handle:horizontal:hover { background: #bbb; }
             QSlider::sub-page:horizontal { background: #3a3a3a; border-radius: 2px; }
@@ -253,7 +266,7 @@ class _ThresholdOverlay(QFrame):
             "QLineEdit { background: #222; color: #ccc; border: 1px solid #444;"
             " border-radius: 3px; font-size: 11px; padding: 1px 4px; }"
         )
-        _label_style = "color: #aaa; font-size: 11px;"
+        _label_style = "color: #ccc; font-size: 12px;"
 
         for name, attr in (("Min", "lo"), ("Max", "hi")):
             row = QHBoxLayout()
@@ -304,18 +317,22 @@ class _ThresholdOverlay(QFrame):
         self._data_max   = float(data.max())
         self._lo         = self._data_min
         self._hi         = self._data_max
-        self._active_cb.setChecked(False)
+        self._active_btn.setChecked(False)
         self._sync_controls()
 
     @property
     def is_active(self) -> bool:
-        return self._active_cb.isChecked()
+        return self._active_btn.isChecked()
 
     @property
     def current_range(self) -> tuple[float, float]:
         return self._lo, self._hi
 
     # ── Internal ──────────────────────────────────────────────────────────────
+
+    def _on_active_toggled(self, checked: bool):
+        self._active_btn.setText("ON" if checked else "OFF")
+        self.toggled.emit(checked)
 
     def _refresh_color_btn(self):
         r, g, b   = self._color_rgb
@@ -386,7 +403,7 @@ class _ThresholdOverlay(QFrame):
         self._lo = thresh            # highlight brighter pixels (above Otsu threshold)
         self._hi = self._data_max
         self._sync_controls()
-        self._active_cb.setChecked(True)
+        self._active_btn.setChecked(True)
         self.range_changed.emit(self._lo, self._hi)
 
     def start_hide(self):
@@ -423,8 +440,61 @@ def _otsu_threshold(data: np.ndarray) -> float:
     w1       = 1.0 - w0
     mu0      = np.cumsum(counts * centers) / (np.cumsum(counts) + 1e-9)
     mu_total = float((counts * centers).sum() / total)
-    mu1      = np.where(w1 > 1e-9, (mu_total - w0 * mu0) / w1, 0.0)
+    mu1      = np.where(w1 > 1e-9, (mu_total - w0 * mu0) / np.maximum(w1, 1e-9), 0.0)
     return float(centers[int(np.argmax(w0 * w1 * (mu0 - mu1) ** 2))])
+
+
+# ── Loading spinner ───────────────────────────────────────────────────────────
+
+class _LoadingSpinner(QWidget):
+    """Rotating arc animation shown on empty panels while data loads."""
+
+    def __init__(self, label: str, parent=None):
+        super().__init__(parent)
+        self._angle = 0
+        self._label = label
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)   # ~60 fps
+        self._timer.timeout.connect(self._tick)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+    def start(self):
+        self._timer.start()
+        self.show()
+
+    def stop(self):
+        self._timer.stop()
+        self.hide()
+
+    def _tick(self):
+        self._angle = (self._angle + 4) % 360
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        cx, cy = self.width() // 2, self.height() // 2
+        r = 28
+        arc_top = cy - r - 14   # shift arc upward to leave room for label
+
+        # Background ring
+        p.setPen(QPen(QColor("#2a2a2a"), 4, Qt.PenStyle.SolidLine,
+                      Qt.PenCapStyle.RoundCap))
+        p.drawArc(cx - r, arc_top, r * 2, r * 2, 0, 360 * 16)
+
+        # Animated foreground arc
+        p.setPen(QPen(QColor("#2ce67f"), 4, Qt.PenStyle.SolidLine,
+                      Qt.PenCapStyle.RoundCap))
+        p.drawArc(cx - r, arc_top, r * 2, r * 2,
+                  -self._angle * 16, 270 * 16)
+
+        # File type label below arc
+        p.setPen(QColor("#666"))
+        font = p.font()
+        font.setPointSize(10)
+        p.setFont(font)
+        p.drawText(0, cy + 22, self.width(), 20,
+                   Qt.AlignmentFlag.AlignHCenter, self._label)
 
 
 # ── ViewerPanel ───────────────────────────────────────────────────────────────
@@ -501,6 +571,11 @@ class ViewerPanel(QWidget):
         self._wire_btn(self._hist_btn, self._hist_overlay, self._thr_overlay)
         self._wire_btn(self._thr_btn,  self._thr_overlay,  self._hist_overlay)
 
+        # Loading spinner (overlaid, hidden until start_loading is called)
+        self._spinner = _LoadingSpinner(
+            FILE_TYPE_LABELS.get(file_type, file_type), self
+        )
+
     # ── Public API ────────────────────────────────────────────────────────────
 
     def load(self, data: np.ndarray, lo: float, hi: float):
@@ -508,6 +583,14 @@ class ViewerPanel(QWidget):
         self._viewer.clear_threshold()
         self._thr_overlay.setup(data, lo, hi)
         self._refresh_hist()
+
+    def start_loading(self):
+        self._position_spinner()
+        self._spinner.raise_()
+        self._spinner.start()
+
+    def stop_loading(self):
+        self._spinner.stop()
 
     @property
     def viewer(self) -> VolumeViewer:
@@ -555,9 +638,13 @@ class ViewerPanel(QWidget):
             *self._viewer.display_range,
         )
 
+    def _position_spinner(self):
+        self._spinner.setGeometry(0, 30, self.width(), self.height() - 30)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._reposition_overlays()
+        self._position_spinner()
 
     def _reposition_overlays(self):
         title_h = 30

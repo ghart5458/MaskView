@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from PyQt6.QtCore import QThread, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QProgressBar, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QMainWindow, QWidget
 
 from ..files.loader import compute_display_range, load_volume
 from ..files.resolver import (
@@ -23,10 +23,12 @@ class _LoaderThread(QThread):
     file_failed   = pyqtSignal(str, str)
     all_done      = pyqtSignal()
 
-    def __init__(self, ind: Individual, file_types: list[str], parent=None):
+    def __init__(self, ind: Individual, file_types: list[str],
+                 turbo_step: int = 1, parent=None):
         super().__init__(parent)
         self._ind = ind
         self._file_types = file_types
+        self._turbo_step = turbo_step
         self._stop = False
 
     def stop(self):
@@ -42,9 +44,12 @@ class _LoaderThread(QThread):
                 self.file_failed.emit(ft, "not found")
                 continue
             try:
-                data, _ = load_volume(path, use_memmap=False)
+                data, _ = load_volume(path, use_memmap=False, turbo_step=self._turbo_step)
                 dmax = display_max(ft)
-                lo, hi = (0.0, float(dmax)) if dmax is not None else compute_display_range(data)
+                if dmax is not None:
+                    lo, hi = 0.0, float(dmax)
+                else:
+                    lo, hi = compute_display_range(data)
                 self.file_loaded.emit(ft, data, lo, hi)
             except Exception as exc:
                 self.file_failed.emit(ft, str(exc))
@@ -59,11 +64,13 @@ class _PreloaderThread(QThread):
 
     chunk_ready = pyqtSignal(int, str, object, float, float)  # idx, ft, data, lo, hi
 
-    def __init__(self, ind_idx: int, ind: Individual, file_types: list[str], parent=None):
+    def __init__(self, ind_idx: int, ind: Individual, file_types: list[str],
+                 turbo_step: int = 1, parent=None):
         super().__init__(parent)
         self._idx        = ind_idx
         self._ind        = ind
         self._file_types = file_types
+        self._turbo_step = turbo_step
         self._stop       = False
 
     def stop(self):
@@ -77,13 +84,15 @@ class _PreloaderThread(QThread):
             if path is None:
                 continue
             try:
-                data, _ = load_volume(path, use_memmap=False)
+                data, _ = load_volume(path, use_memmap=False, turbo_step=self._turbo_step)
                 dmax = display_max(ft)
-                lo, hi = (0.0, float(dmax)) if dmax is not None else compute_display_range(data)
+                if dmax is not None:
+                    lo, hi = 0.0, float(dmax)
+                else:
+                    lo, hi = compute_display_range(data)
                 self.chunk_ready.emit(self._idx, ft, data, lo, hi)
             except Exception:
                 pass
-            # Brief yield between files to avoid hogging CPU from the UI thread
             self.msleep(80)
 
 
@@ -96,11 +105,9 @@ class MainWindow(QMainWindow):
         self._current_idx = -1
         self._session_types: list[str] = list(_DEFAULT_FILE_TYPES)
         self._par_path: Path | None = None
-        self._loaded_count = 0
-        self._total_count = 0
         self._loading = False
-        self._loading_ind = ""
         self._loader: _LoaderThread | None = None
+        self._turbo_step = 1
 
         # Pre-load cache: {individual_idx: {file_type: (data, lo, hi)}}
         self._preload_cache: dict[int, dict[str, tuple]] = {}
@@ -132,29 +139,18 @@ class MainWindow(QMainWindow):
         self._sidebar.orientation_changed.connect(self._viewer.set_orientation)
         self._sidebar.layout_changed.connect(self._viewer.set_layout_mode)
         self._sidebar.sync_toggled.connect(self._viewer.set_sync)
+        self._sidebar.turbo_toggled.connect(self._on_turbo_toggled)
         self._sidebar.individual_selected.connect(self._on_individual_selected)
 
         # Viewer signals
         self._viewer.panel_closed.connect(self._on_panel_closed)
 
-        # Status bar (non-modal progress)
-        sb = self.statusBar()
-        sb.setStyleSheet("QStatusBar { background: #111; border-top: 1px solid #222; }")
-        self._status_label = QLabel()
-        self._status_label.setStyleSheet("color: #777; font-size: 12px; padding: 0 8px;")
-        self._status_prog = QProgressBar()
-        self._status_prog.setFixedWidth(160)
-        self._status_prog.setFixedHeight(10)
-        self._status_prog.setTextVisible(False)
-        self._status_prog.setStyleSheet("""
-            QProgressBar { background: #222; border: 1px solid #333; border-radius: 2px; }
-            QProgressBar::chunk { background: #2ce67f; border-radius: 2px; }
-        """)
-        sb.addPermanentWidget(self._status_label)
-        sb.addPermanentWidget(self._status_prog)
-        sb.hide()
-
     # ── Session ───────────────────────────────────────────────────────────────
+
+    def _on_turbo_toggled(self, enabled: bool):
+        self._turbo_step = 4 if enabled else 1
+        self._cancel_preloaders()
+        self._preload_cache.clear()
 
     def _on_par_selected(self, path: Path):
         self._cancel_preloaders()
@@ -230,17 +226,9 @@ class MainWindow(QMainWindow):
             self._viewer.add_empty_panel(ft)
 
         self._loading = True
-        self._loading_ind = ind.oldname
-        self._loaded_count = 0
-        self._total_count = len(file_types)
         self._sidebar.set_controls_enabled(False)
 
-        self._status_label.setText(ind.oldname)
-        self._status_prog.setRange(0, 0)  # marquee from the start
-        self.statusBar().show()
-
-        self._loader = _LoaderThread(ind, file_types)
-        self._loader.file_starting.connect(self._on_file_starting)
+        self._loader = _LoaderThread(ind, file_types, self._turbo_step)
         self._loader.file_loaded.connect(self._on_file_loaded)
         self._loader.file_failed.connect(self._on_file_failed)
         self._loader.all_done.connect(self._on_load_done)
@@ -248,38 +236,21 @@ class MainWindow(QMainWindow):
 
     def _cancel_loader(self):
         if self._loader is not None:
-            for sig in (self._loader.file_starting, self._loader.file_loaded,
+            for sig in (self._loader.file_loaded,
                         self._loader.file_failed, self._loader.all_done):
                 sig.disconnect()
             self._loader.stop()
             self._loader = None
-        self.statusBar().hide()
-
-    def _on_file_starting(self, ft: str):
-        n, done = self._total_count, self._loaded_count
-        self._status_label.setText(
-            f"{self._loading_ind}  ·  {FILE_TYPE_LABELS.get(ft, ft)}…  "
-            f"({done + 1}/{n})"
-        )
 
     def _on_file_loaded(self, ft: str, data: object, lo: float, hi: float):
         self._viewer.fill_panel(ft, data, lo, hi)
         self._sidebar.set_file_loaded(ft, True)
-        self._loaded_count += 1
-        self._status_label.setText(
-            f"{self._loading_ind}  ·  {self._loaded_count}/{self._total_count} loaded"
-        )
         self._sidebar.update_annotations([p.file_type for p in self._viewer.panels])
 
     def _on_file_failed(self, ft: str, _msg: str):
-        self._viewer.close_panel(ft)   # remove the placeholder that was added
-        self._loaded_count += 1
-        self._status_label.setText(
-            f"{self._loading_ind}  ·  {self._loaded_count}/{self._total_count} loaded"
-        )
+        self._viewer.close_panel(ft)
 
     def _on_load_done(self):
-        self.statusBar().hide()
         self._loading = False
         self._sidebar.set_controls_enabled(True)
         self._loader = None
@@ -300,7 +271,7 @@ class MainWindow(QMainWindow):
                        if resolve_file(ind, ft) is not None]
             if not to_load:
                 continue
-            loader = _PreloaderThread(i, ind, to_load)
+            loader = _PreloaderThread(i, ind, to_load, self._turbo_step)
             loader.chunk_ready.connect(self._on_preload_chunk)
             loader.start()
             self._preloaders.append(loader)

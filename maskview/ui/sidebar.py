@@ -93,6 +93,7 @@ class Sidebar(QWidget):
     orientation_changed = pyqtSignal(str)
     layout_changed      = pyqtSignal(str)
     sync_toggled        = pyqtSignal(bool)
+    turbo_toggled       = pyqtSignal(bool)
     individual_selected = pyqtSignal(int)
 
     def __init__(self, parent=None):
@@ -314,6 +315,18 @@ class Sidebar(QWidget):
         self._sync_cb.setStyleSheet("QCheckBox { color: #bbb; font-size: 12px; }")
         self._sync_cb.toggled.connect(self.sync_toggled)
         body.addWidget(self._sync_cb)
+
+        body.addWidget(_sep())
+        self._turbo_cb = QCheckBox("Turbo Mode")
+        self._turbo_cb.setChecked(False)
+        self._turbo_cb.setStyleSheet("QCheckBox { color: #bbb; font-size: 12px; }")
+        self._turbo_cb.setToolTip(
+            "Load at quarter resolution (stride 4 in all three dimensions).\n"
+            "All view orientations stay proportional; reduces load time and RAM use.\n"
+            "Toggle takes effect on next Load."
+        )
+        self._turbo_cb.toggled.connect(self.turbo_toggled)
+        body.addWidget(self._turbo_cb)
 
         body.addWidget(_sep())
         self._placeholder_lbls = []
@@ -543,11 +556,8 @@ class Sidebar(QWidget):
             )
 
     def set_controls_enabled(self, enabled: bool):
-        self._indiv_list.setEnabled(enabled)
-        self._prev_btn.setEnabled(enabled and self._current_idx > 0)
-        self._next_btn.setEnabled(
-            enabled and 0 <= self._current_idx < len(self._individuals) - 1
-        )
+        # Navigation stays active so the user can cancel a slow load by moving elsewhere.
+        # Only the file selector is locked while loading.
         for ft, cb in self._file_checks.items():
             cb.setEnabled(enabled and self._file_available.get(ft, False))
         self._apply_btn.setEnabled(enabled and self._current_idx >= 0)
