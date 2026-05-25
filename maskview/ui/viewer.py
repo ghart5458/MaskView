@@ -24,6 +24,7 @@ class VolumeViewer(QWidget):
     cursor_left         = pyqtSignal()
     tag_place_requested = pyqtSignal(int, int, int)  # voxel x, y, z
     tag_edit_requested  = pyqtSignal(str)            # tag_id
+    anchor_clicked      = pyqtSignal(float, float)   # scene x, y
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -58,6 +59,7 @@ class VolumeViewer(QWidget):
         self._view.cursor_left.connect(self.cursor_left)
         self._view.tag_scene_clicked.connect(self._on_tag_scene_clicked)
         self._view.tag_marker_clicked.connect(self.tag_edit_requested)
+        self._view.anchor_scene_clicked.connect(self.anchor_clicked)
         layout.addWidget(self._view, stretch=1)
 
         bar_widget = QWidget()
@@ -162,6 +164,15 @@ class VolumeViewer(QWidget):
 
     def set_tag_mode(self, active: bool):
         self._view.set_tag_mode(active)
+
+    def set_anchor_mode(self, active: bool):
+        self._view.set_anchor_mode(active)
+
+    def set_anchor_marker(self, x: float, y: float, confirmed: bool):
+        self._view.set_anchor_marker(x, y, confirmed)
+
+    def clear_anchor_marker(self):
+        self._view.clear_anchor_marker()
 
     def highlight_tag(self, tag_id: str):
         self._view.highlight_tag(tag_id)
@@ -346,13 +357,14 @@ class _PanZoomView(QGraphicsView):
     Scroll wheel          → slice navigation (forwarded to VolumeViewer)
     """
 
-    zoom_changed       = pyqtSignal(float)
-    pan_changed        = pyqtSignal(float, float)
-    wheel_scroll       = pyqtSignal(int)
-    cursor_moved       = pyqtSignal(float, float)   # scene x, y
-    cursor_left        = pyqtSignal()
-    tag_scene_clicked  = pyqtSignal(float, float)   # scene x, y for new tag placement
-    tag_marker_clicked = pyqtSignal(str)            # tag_id for edit
+    zoom_changed        = pyqtSignal(float)
+    pan_changed         = pyqtSignal(float, float)
+    wheel_scroll        = pyqtSignal(int)
+    cursor_moved        = pyqtSignal(float, float)   # scene x, y
+    cursor_left         = pyqtSignal()
+    tag_scene_clicked   = pyqtSignal(float, float)   # scene x, y for new tag placement
+    tag_marker_clicked  = pyqtSignal(str)            # tag_id for edit
+    anchor_scene_clicked = pyqtSignal(float, float)  # scene x, y for anchor placement
 
     # Discrete zoom levels matching FIJI's sequence
     _ZOOM_LEVELS = (
@@ -402,6 +414,10 @@ class _PanZoomView(QGraphicsView):
         self._highlight_timer = QTimer(self)
         self._highlight_timer.setInterval(70)
         self._highlight_timer.timeout.connect(self._highlight_tick)
+
+        self._anchor_mode = False
+        self._anchor_marker: QPointF | None = None
+        self._anchor_confirmed = False
 
         # Required so mouseMoveEvent fires during hover (not just button-press)
         self.setMouseTracking(True)
@@ -459,7 +475,10 @@ class _PanZoomView(QGraphicsView):
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
             if not self._is_panning and self._drag_start is not None:
-                if self._tag_mode:
+                if self._anchor_mode:
+                    sp = self.mapToScene(self._drag_start)
+                    self.anchor_scene_clicked.emit(sp.x(), sp.y())
+                elif self._tag_mode:
                     click_vp = self._drag_start
                     hit_id = None
                     for col, row, _color, tag_id, _note in self._tag_markers:
@@ -480,7 +499,9 @@ class _PanZoomView(QGraphicsView):
             self._drag_start = None
             self._last_pos = None
             self.setCursor(
-                Qt.CursorShape.CrossCursor if self._tag_mode else Qt.CursorShape.ArrowCursor
+                Qt.CursorShape.CrossCursor
+                if (self._tag_mode or self._anchor_mode)
+                else Qt.CursorShape.ArrowCursor
             )
             event.accept()
         else:
@@ -576,6 +597,35 @@ class _PanZoomView(QGraphicsView):
                     if tag_id == self._highlight_tag_id:
                         painter.drawEllipse(QPointF(col, row), ring_r, ring_r)
                         break
+
+        if self._anchor_marker is not None:
+            zoom = max(self.transform().m11(), 0.001)
+            ax, ay = self._anchor_marker.x(), self._anchor_marker.y()
+            r = 7 / zoom
+            fill = QColor(44, 230, 127, 230) if self._anchor_confirmed else QColor(255, 200, 0, 230)
+            border_pen = QPen(QColor(255, 255, 255, 200))
+            border_pen.setCosmetic(True)
+            border_pen.setWidthF(2.0)
+            painter.setPen(border_pen)
+            painter.setBrush(QBrush(fill))
+            painter.drawEllipse(QPointF(ax, ay), r, r)
+
+    def set_anchor_mode(self, active: bool):
+        self._anchor_mode = active
+        self.setCursor(
+            Qt.CursorShape.CrossCursor if active else
+            (Qt.CursorShape.CrossCursor if self._tag_mode else Qt.CursorShape.ArrowCursor)
+        )
+
+    def set_anchor_marker(self, x: float, y: float, confirmed: bool):
+        self._anchor_marker = QPointF(x, y)
+        self._anchor_confirmed = confirmed
+        self.viewport().update()
+
+    def clear_anchor_marker(self):
+        self._anchor_marker = None
+        self._anchor_confirmed = False
+        self.viewport().update()
 
     def _next_zoom(self, direction: int) -> float:
         """Return the next discrete zoom level up (+1) or down (-1) from current."""

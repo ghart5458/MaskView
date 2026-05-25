@@ -900,6 +900,75 @@ class _TagEditDialog(QDialog):
         return self._deleted
 
 
+# ── Anchor overlay ────────────────────────────────────────────────────────────
+
+class _AnchorOverlay(QFrame):
+    """Floating per-panel widget shown during anchor placement mode."""
+
+    confirm_clicked = pyqtSignal()
+    redo_clicked    = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("anchorOverlay")
+        self.setStyleSheet(
+            "#anchorOverlay { background: rgba(20,20,20,210); border: 1px solid #444;"
+            " border-radius: 4px; }"
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(6)
+
+        self._lbl = QLabel("Click to place anchor")
+        self._lbl.setStyleSheet("color: #888; font-size: 11px; background: transparent;")
+        layout.addWidget(self._lbl)
+
+        self._confirm_btn = QPushButton("Confirm")
+        self._confirm_btn.setStyleSheet(
+            "QPushButton { background: #1a3d26; color: #5fd49a; border: 1px solid #2e6e42;"
+            " border-radius: 3px; font-size: 11px; padding: 2px 8px; }"
+            "QPushButton:hover { background: #147a3f; color: #fff; }"
+        )
+        self._confirm_btn.clicked.connect(self.confirm_clicked)
+        self._confirm_btn.hide()
+        layout.addWidget(self._confirm_btn)
+
+        _redo_style = (
+            "QPushButton { background: #252525; color: #999; border: 1px solid #444;"
+            " border-radius: 3px; font-size: 11px; padding: 2px 8px; }"
+            "QPushButton:hover { background: #333; color: #eee; }"
+        )
+        self._redo_btn = QPushButton("Redo")
+        self._redo_btn.setStyleSheet(_redo_style)
+        self._redo_btn.clicked.connect(self.redo_clicked)
+        self._redo_btn.hide()
+        layout.addWidget(self._redo_btn)
+        self.adjustSize()
+
+    def set_waiting(self):
+        self._lbl.setText("Click to place anchor")
+        self._lbl.setStyleSheet("color: #888; font-size: 11px; background: transparent;")
+        self._confirm_btn.hide()
+        self._redo_btn.hide()
+        self.adjustSize()
+
+    def set_provisional(self, z: int):
+        self._lbl.setText(f"Slice {z + 1}")
+        self._lbl.setStyleSheet("color: #ccc; font-size: 11px; background: transparent;")
+        self._confirm_btn.show()
+        self._redo_btn.show()
+        self.adjustSize()
+
+    def set_confirmed(self, z: int):
+        self._lbl.setText(f"✓  Slice {z + 1}")
+        self._lbl.setStyleSheet("color: #2ce67f; font-size: 11px; background: transparent;")
+        self._confirm_btn.hide()
+        self._redo_btn.show()
+        self.adjustSize()
+
+
 # ── Loading spinner ───────────────────────────────────────────────────────────
 
 class _LoadingSpinner(QWidget):
@@ -986,9 +1055,11 @@ class _DraggableTitleBar(QWidget):
 class ViewerPanel(QWidget):
     """VolumeViewer with title bar, close button, and floating hist/threshold overlays."""
 
-    closed       = pyqtSignal()
-    drag_started = pyqtSignal()
-    tags_changed = pyqtSignal(list, str)  # (tags, file_type) — for sidebar tag list
+    closed           = pyqtSignal()
+    drag_started     = pyqtSignal()
+    tags_changed     = pyqtSignal(list, str)   # (tags, file_type)
+    anchor_confirmed = pyqtSignal(str, int, float, float)  # (file_type, slice_idx, scene_x, scene_y)
+    anchor_cleared   = pyqtSignal(str)         # file_type
 
     _BTN_W      = 52
     _BTN_H      = 22
@@ -1096,6 +1167,10 @@ class ViewerPanel(QWidget):
             FILE_TYPE_LABELS.get(file_type, file_type), self
         )
 
+        self._anchor_overlay: _AnchorOverlay | None = None
+        self._anchor_provisional: tuple | None = None  # (slice_idx, scene_x, scene_y)
+        self._viewer.anchor_clicked.connect(self._on_anchor_clicked)
+
     # ── Public API ────────────────────────────────────────────────────────────
 
     def set_filename(self, path) -> None:
@@ -1138,6 +1213,31 @@ class ViewerPanel(QWidget):
                  if active else
                  "#titleBar { background: #2d2d2d; }")
         self._title_bar.setStyleSheet(style)
+
+    def set_anchor_mode(self, active: bool):
+        self._viewer.set_anchor_mode(active)
+        if active:
+            if self._anchor_overlay is None:
+                self._anchor_overlay = _AnchorOverlay(self)
+                self._anchor_overlay.confirm_clicked.connect(self._on_anchor_confirm)
+                self._anchor_overlay.redo_clicked.connect(self._on_anchor_redo)
+            self._anchor_overlay.set_waiting()
+            self._position_anchor_overlay()
+            self._anchor_overlay.show()
+            self._anchor_overlay.raise_()
+        else:
+            if self._anchor_overlay is not None:
+                self._anchor_overlay.hide()
+            self._viewer.set_anchor_mode(False)
+            self._viewer.clear_anchor_marker()
+            self._anchor_provisional = None
+
+    def dismiss_anchor_ui(self):
+        """Remove overlay and clear marker (called when anchors are cleared entirely)."""
+        if self._anchor_overlay is not None:
+            self._anchor_overlay.hide()
+        self._viewer.clear_anchor_marker()
+        self._anchor_provisional = None
 
     @property
     def viewer(self) -> VolumeViewer:
@@ -1183,6 +1283,41 @@ class ViewerPanel(QWidget):
                 self._tag_store.update(tag_id, dlg.note, dlg.color)
         self._viewer.set_tags(self._tag_store.tags)
         self.tags_changed.emit(self._tag_store.tags, self._file_type)
+
+    def _on_anchor_clicked(self, x: float, y: float):
+        z = self._viewer.current_slice
+        self._anchor_provisional = (z, x, y)
+        self._viewer.set_anchor_marker(x, y, confirmed=False)
+        if self._anchor_overlay is not None:
+            self._anchor_overlay.set_provisional(z)
+            self._position_anchor_overlay()
+
+    def _on_anchor_confirm(self):
+        if self._anchor_provisional is None:
+            return
+        z, x, y = self._anchor_provisional
+        self._viewer.set_anchor_marker(x, y, confirmed=True)
+        if self._anchor_overlay is not None:
+            self._anchor_overlay.set_confirmed(z)
+            self._position_anchor_overlay()
+        self.anchor_confirmed.emit(self._file_type, z, x, y)
+
+    def _on_anchor_redo(self):
+        self._anchor_provisional = None
+        self._viewer.clear_anchor_marker()
+        if self._anchor_overlay is not None:
+            self._anchor_overlay.set_waiting()
+            self._position_anchor_overlay()
+        self.anchor_cleared.emit(self._file_type)
+
+    def _position_anchor_overlay(self):
+        if self._anchor_overlay is None:
+            return
+        ov = self._anchor_overlay
+        ov.adjustSize()
+        x = (self.width() - ov.width()) // 2
+        y = self.height() - ov.height() - 40
+        ov.move(x, max(35, y))
 
     def _wire_btn(self, btn: QPushButton, overlay, *others):
         def _enter():
@@ -1230,6 +1365,7 @@ class ViewerPanel(QWidget):
         super().resizeEvent(event)
         self._reposition_overlays()
         self._position_spinner()
+        self._position_anchor_overlay()
 
     def _reposition_overlays(self):
         title_h = 30

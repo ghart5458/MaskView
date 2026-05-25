@@ -268,9 +268,35 @@ class MainWindow(QMainWindow):
         self._viewer.panel_closed.connect(self._on_panel_closed)
         self._viewer.composite_target_selected.connect(self._on_composite_target_selected)
 
+        self._sidebar.anchor_mode_requested.connect(self._viewer.enter_anchor_mode)
+        self._sidebar.anchor_apply_requested.connect(self._on_anchor_apply)
+        self._sidebar.anchor_cancel_requested.connect(self._on_anchor_cancel)
+        self._sidebar.anchor_clear_requested.connect(self._on_anchor_clear)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._notifs.reposition()
+
+    # ── Anchor sync ───────────────────────────────────────────────────────────
+
+    def _on_anchor_apply(self):
+        self._viewer.apply_anchor_sync()
+        self._sidebar.update_anchor_state(active=False, has_anchors=True)
+
+    def _on_anchor_cancel(self):
+        self._viewer.exit_anchor_mode()
+        self._sidebar.update_anchor_state(
+            active=False, has_anchors=bool(self._viewer.anchors)
+        )
+
+    def _on_anchor_clear(self):
+        self._viewer.clear_anchors()
+        self._sidebar.update_anchor_state(active=False, has_anchors=False)
+
+    def _clear_anchors_on_nav(self):
+        if self._viewer.anchors or self._viewer._anchor_mode:
+            self._viewer.clear_anchors()
+            self._sidebar.update_anchor_state(active=False, has_anchors=False)
 
     # ── Session ───────────────────────────────────────────────────────────────
 
@@ -281,6 +307,7 @@ class MainWindow(QMainWindow):
         _settings.save({'turbo_stride': step})
 
     def _on_par_selected(self, path: Path):
+        self._clear_anchors_on_nav()
         self._cancel_preloaders()
         self._preload_cache.clear()
         self._single_scan_mode = False
@@ -303,6 +330,7 @@ class MainWindow(QMainWindow):
         self._sidebar.select_individual_silent(0)
 
     def _on_scan_selected(self, path: Path):
+        self._clear_anchors_on_nav()
         self._cancel_preloaders()
         self._preload_cache.clear()
         self._single_scan_mode = True
@@ -378,6 +406,7 @@ class MainWindow(QMainWindow):
     def _on_manual_files_selected(self, file_paths: dict):
         if not file_paths:
             return
+        self._clear_anchors_on_nav()
         self._cancel_preloaders()
         self._preload_cache.clear()
         self._single_scan_mode = True
@@ -436,6 +465,7 @@ class MainWindow(QMainWindow):
     def _on_individual_selected(self, idx: int):
         if idx == self._current_idx and self._loading:
             return
+        self._clear_anchors_on_nav()
         self._save_current_to_cache(next_idx=idx)
         self._current_idx = idx
         ind = self._individuals[idx]
@@ -647,8 +677,8 @@ class MainWindow(QMainWindow):
         if len(shapes) > 1:
             self._notifs.show(
                 "Dimension Mismatch",
-                "Open volumes have different dimensions — window sync may not align "
-                "correctly. A manual anchor-point sync feature is planned for this case.",
+                "Open volumes have different dimensions — use ANCHOR SYNC in the sidebar "
+                "to place matching reference points and enable offset sync.",
                 "warning",
             )
 

@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 import numpy as np
 from PyQt6.QtCore import QEvent, QPoint, QRect, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QCursor, QPainter
@@ -7,6 +9,13 @@ from .composite_panel import COMPOSITE_TYPE, CompositePanel
 from .viewer_panel import ViewerPanel
 
 _HANDLE_STYLE = "QSplitter::handle { background: #333; }"
+
+
+@dataclass
+class _AnchorPoint:
+    slice_idx: int
+    scene_x: float
+    scene_y: float
 
 
 class _SelectionOverlay(QWidget):
@@ -71,6 +80,8 @@ class MultiViewer(QWidget):
         self._last_active_panel = None
         self._dragging_panel    = None
         self._drag_hover        = None
+        self._anchor_mode  = False
+        self._anchors: dict[str, _AnchorPoint] = {}
         self._setup_ui()
 
     def _setup_ui(self):
@@ -190,6 +201,8 @@ class MultiViewer(QWidget):
     def clear(self) -> None:
         for panel in list(self._panels):
             self._remove_panel(panel)
+        self._anchors.clear()
+        self._anchor_mode = False
 
     # ── Selection mode ────────────────────────────────────────────────────────
 
@@ -313,17 +326,37 @@ class MultiViewer(QWidget):
             panel.tags_changed.connect(self.panel_tags_changed)
         if hasattr(panel, "drag_started"):
             panel.drag_started.connect(lambda p=panel: self._on_drag_started(p))
+        if hasattr(panel, "anchor_confirmed"):
+            panel.anchor_confirmed.connect(self._on_anchor_confirmed)
+        if hasattr(panel, "anchor_cleared"):
+            panel.anchor_cleared.connect(self._on_anchor_cleared)
 
     def _on_slice_changed(self, z: int):
-        if not self._sync_enabled:
+        if not self._sync_enabled or self._anchor_mode:
             return
         src = self.sender()
-        for p in self._panels:
-            if p.viewer is not src:
-                p.viewer.set_slice(z)
+        src_panel = next((p for p in self._panels if p.viewer is src), None)
+        if self._anchors and src_panel is not None:
+            src_ft = src_panel.file_type
+            if src_ft not in self._anchors:
+                return
+            src_anchor = self._anchors[src_ft]
+            for p in self._panels:
+                if p.viewer is src:
+                    continue
+                ft = p.file_type
+                if ft not in self._anchors:
+                    continue
+                p.viewer.set_slice(
+                    max(0, self._anchors[ft].slice_idx + (z - src_anchor.slice_idx))
+                )
+        else:
+            for p in self._panels:
+                if p.viewer is not src:
+                    p.viewer.set_slice(z)
 
     def _on_zoom_changed(self, factor: float):
-        if not self._sync_enabled:
+        if not self._sync_enabled or self._anchor_mode:
             return
         src = self.sender()
         for p in self._panels:
@@ -331,12 +364,81 @@ class MultiViewer(QWidget):
                 p.viewer.set_zoom(factor)
 
     def _on_pan_changed(self, x: float, y: float):
-        if not self._sync_enabled:
+        if not self._sync_enabled or self._anchor_mode:
             return
         src = self.sender()
-        for p in self._panels:
-            if p.viewer is not src:
-                p.viewer.set_pan(x, y)
+        src_panel = next((p for p in self._panels if p.viewer is src), None)
+        if self._anchors and src_panel is not None:
+            src_ft = src_panel.file_type
+            if src_ft not in self._anchors:
+                return
+            src_anchor = self._anchors[src_ft]
+            for p in self._panels:
+                if p.viewer is src:
+                    continue
+                ft = p.file_type
+                if ft not in self._anchors:
+                    continue
+                tgt = self._anchors[ft]
+                p.viewer.set_pan(
+                    tgt.scene_x + (x - src_anchor.scene_x),
+                    tgt.scene_y + (y - src_anchor.scene_y),
+                )
+        else:
+            for p in self._panels:
+                if p.viewer is not src:
+                    p.viewer.set_pan(x, y)
+
+    # ── Anchor sync ───────────────────────────────────────────────────────────
+
+    @property
+    def anchors(self) -> dict:
+        return dict(self._anchors)
+
+    def enter_anchor_mode(self):
+        if self._anchor_mode:
+            return
+        self._anchor_mode = True
+        for panel in self._panels:
+            if hasattr(panel, "set_anchor_mode"):
+                panel.set_anchor_mode(True)
+
+    def exit_anchor_mode(self):
+        self._anchor_mode = False
+        for panel in self._panels:
+            if hasattr(panel, "set_anchor_mode"):
+                panel.set_anchor_mode(False)
+
+    def apply_anchor_sync(self):
+        """Activate offset sync using confirmed anchors; hide overlays."""
+        self._anchor_mode = False
+        for panel in self._panels:
+            if hasattr(panel, "set_anchor_mode"):
+                panel.set_anchor_mode(False)
+        # Center each anchored panel on its anchor point
+        for panel in self._panels:
+            ft = panel.file_type
+            if ft in self._anchors:
+                a = self._anchors[ft]
+                panel.viewer.set_slice(a.slice_idx)
+                panel.viewer.set_pan(a.scene_x, a.scene_y)
+
+    def clear_anchors(self):
+        """Clear all anchors and return to standard sync."""
+        self._anchors.clear()
+        self._anchor_mode = False
+        for panel in self._panels:
+            if hasattr(panel, "set_anchor_mode"):
+                panel.set_anchor_mode(False)
+            if hasattr(panel, "dismiss_anchor_ui"):
+                panel.dismiss_anchor_ui()
+
+    def _on_anchor_confirmed(self, file_type: str, slice_idx: int,
+                              scene_x: float, scene_y: float):
+        self._anchors[file_type] = _AnchorPoint(slice_idx, scene_x, scene_y)
+
+    def _on_anchor_cleared(self, file_type: str):
+        self._anchors.pop(file_type, None)
 
     def _on_cursor_moved(self, x: float, y: float):
         src = self.sender()
@@ -348,9 +450,23 @@ class MultiViewer(QWidget):
                 self.panel_tags_changed.emit(tags, ft)
         if not self._sync_enabled:
             return
-        for p in self._panels:
-            if p.viewer is not src:
-                p.viewer.set_external_cursor(x, y)
+        if self._anchors and src_panel is not None:
+            src_anchor = self._anchors.get(src_panel.file_type)
+            for p in self._panels:
+                if p.viewer is src:
+                    continue
+                tgt = self._anchors.get(p.file_type)
+                if src_anchor is not None and tgt is not None:
+                    p.viewer.set_external_cursor(
+                        tgt.scene_x + (x - src_anchor.scene_x),
+                        tgt.scene_y + (y - src_anchor.scene_y),
+                    )
+                else:
+                    p.viewer.set_external_cursor(x, y)
+        else:
+            for p in self._panels:
+                if p.viewer is not src:
+                    p.viewer.set_external_cursor(x, y)
 
     def _on_cursor_left(self):
         src = self.sender()

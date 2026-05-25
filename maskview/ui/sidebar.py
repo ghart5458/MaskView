@@ -14,7 +14,7 @@ from ..par.parser import Individual
 from .annotations import BTN_TO_VALUE, VALUE_TO_BTN
 from .viewer_panel import _ColorSwatchPicker
 
-_TRIGGER_W = 22
+_TRIGGER_W = 26
 _PANEL_W   = 270
 _OPEN_W    = _TRIGGER_W + _PANEL_W
 
@@ -192,9 +192,13 @@ class _ManualFileSelectDialog(QDialog):
 class Sidebar(QWidget):
     """Hover-activated overlay sidebar with four collapsible sections."""
 
-    par_selected        = pyqtSignal(object)    # Path
-    scan_selected       = pyqtSignal(object)    # Path
-    manual_files_selected = pyqtSignal(dict)    # {file_type: Path}
+    par_selected           = pyqtSignal(object)   # Path
+    scan_selected          = pyqtSignal(object)   # Path
+    manual_files_selected  = pyqtSignal(dict)     # {file_type: Path}
+    anchor_mode_requested  = pyqtSignal()
+    anchor_apply_requested = pyqtSignal()
+    anchor_cancel_requested = pyqtSignal()
+    anchor_clear_requested  = pyqtSignal()
     files_applied       = pyqtSignal(list)      # list[str] of checked file types
     orientation_changed = pyqtSignal(str)
     layout_changed      = pyqtSignal(str)
@@ -551,6 +555,53 @@ class Sidebar(QWidget):
         self._sync_btn.toggled.connect(self._on_sync_toggled)
         srow.addWidget(self._sync_btn)
         db.addWidget(sync_row)
+
+        db.addWidget(_sep())
+        anchor_row = QWidget()
+        anchor_row.setStyleSheet("background: transparent;")
+        arow = QHBoxLayout(anchor_row)
+        arow.setContentsMargins(0, 2, 0, 0)
+        arow.setSpacing(4)
+        arow.addWidget(_mini_label("ANCHOR SYNC"))
+        arow.addStretch()
+        self._anchor_set_btn = QPushButton("SET")
+        self._anchor_set_btn.setFixedSize(42, 22)
+        self._anchor_set_btn.setStyleSheet(_TURBO_OFF_STYLE)
+        self._anchor_set_btn.setToolTip(
+            "Place matching anchor points in each panel to enable\n"
+            "offset sync for volumes with mismatched dimensions."
+        )
+        self._anchor_set_btn.clicked.connect(self._on_anchor_set_clicked)
+        arow.addWidget(self._anchor_set_btn)
+        self._anchor_apply_btn = QPushButton("APPLY")
+        self._anchor_apply_btn.setFixedSize(42, 22)
+        self._anchor_apply_btn.setStyleSheet(_TURBO_ON_STYLE)
+        self._anchor_apply_btn.setToolTip("Activate offset sync using confirmed anchor points")
+        self._anchor_apply_btn.clicked.connect(self._on_anchor_apply_clicked)
+        self._anchor_apply_btn.hide()
+        arow.addWidget(self._anchor_apply_btn)
+        self._anchor_cancel_btn = QPushButton("✕")
+        self._anchor_cancel_btn.setFixedSize(22, 22)
+        self._anchor_cancel_btn.setStyleSheet(
+            "QPushButton { background: #252525; color: #666; border: 1px solid #333;"
+            " border-radius: 3px; font-size: 11px; font-weight: bold; }"
+            "QPushButton:hover { color: #e06060; background: #2e2e2e; }"
+        )
+        self._anchor_cancel_btn.setToolTip("Cancel anchor placement")
+        self._anchor_cancel_btn.clicked.connect(self._on_anchor_cancel_clicked)
+        self._anchor_cancel_btn.hide()
+        arow.addWidget(self._anchor_cancel_btn)
+        db.addWidget(anchor_row)
+
+        self._anchor_clear_btn = QPushButton("Clear anchors")
+        self._anchor_clear_btn.setStyleSheet(
+            "QPushButton { background: #252525; color: #666; border: 1px solid #333;"
+            " border-radius: 3px; font-size: 11px; padding: 3px 6px; }"
+            "QPushButton:hover { color: #e06060; background: #2e2e2e; }"
+        )
+        self._anchor_clear_btn.clicked.connect(self.anchor_clear_requested)
+        self._anchor_clear_btn.hide()
+        db.addWidget(self._anchor_clear_btn)
 
         body.addWidget(self._sec_display)
 
@@ -1062,7 +1113,39 @@ class Sidebar(QWidget):
             cb.setEnabled(enabled and self._file_available.get(ft, False))
         self._apply_btn.setEnabled(enabled and self._current_idx >= 0)
 
+    def update_anchor_state(self, active: bool, has_anchors: bool):
+        """Reflect current anchor mode in the sidebar buttons."""
+        if active:
+            self._anchor_set_btn.hide()
+            self._anchor_apply_btn.show()
+            self._anchor_cancel_btn.show()
+            self._anchor_clear_btn.hide()
+        else:
+            self._anchor_set_btn.show()
+            self._anchor_apply_btn.hide()
+            self._anchor_cancel_btn.hide()
+            self._anchor_clear_btn.setVisible(has_anchors)
+
     # ── Internal ──────────────────────────────────────────────────────────────
+
+    def _on_anchor_set_clicked(self):
+        self._anchor_set_btn.hide()
+        self._anchor_apply_btn.show()
+        self._anchor_cancel_btn.show()
+        self.anchor_mode_requested.emit()
+
+    def _on_anchor_apply_clicked(self):
+        self._anchor_apply_btn.hide()
+        self._anchor_cancel_btn.hide()
+        self._anchor_set_btn.show()
+        self._anchor_clear_btn.show()
+        self.anchor_apply_requested.emit()
+
+    def _on_anchor_cancel_clicked(self):
+        self._anchor_apply_btn.hide()
+        self._anchor_cancel_btn.hide()
+        self._anchor_set_btn.show()
+        self.anchor_cancel_requested.emit()
 
     def _update_file_count(self):
         n = sum(1 for cb in self._file_checks.values() if cb.isChecked())
