@@ -1,11 +1,11 @@
 from pathlib import Path
 
-from PyQt6.QtCore import QEasingCurve, Qt, QTimer, QVariantAnimation, pyqtSignal
-from PyQt6.QtGui import QCursor
+from PyQt6.QtCore import QEasingCurve, QPoint, Qt, QTimer, QVariantAnimation, pyqtSignal
+from PyQt6.QtGui import QColor, QCursor
 from PyQt6.QtWidgets import (
-    QButtonGroup, QCheckBox, QFileDialog, QFrame,
+    QButtonGroup, QCheckBox, QColorDialog, QComboBox, QFileDialog, QFrame,
     QHBoxLayout, QLabel, QListWidget, QPushButton,
-    QRadioButton, QScrollArea, QVBoxLayout, QWidget,
+    QRadioButton, QScrollArea, QSlider, QVBoxLayout, QWidget,
 )
 
 from ..files.resolver import FILE_TYPE_LABELS, FILE_TYPE_ORDER
@@ -31,6 +31,12 @@ def _mini_label(text: str) -> QLabel:
         " letter-spacing: 1px; padding: 4px 0 2px 0;"
     )
     return lbl
+
+
+class _ScrollLockCombo(QComboBox):
+    """QComboBox that ignores scroll-wheel events to prevent accidental selection changes."""
+    def wheelEvent(self, event):
+        event.ignore()
 
 
 class _Section(QWidget):
@@ -93,8 +99,11 @@ class Sidebar(QWidget):
     orientation_changed = pyqtSignal(str)
     layout_changed      = pyqtSignal(str)
     sync_toggled        = pyqtSignal(bool)
-    turbo_toggled       = pyqtSignal(bool)
+    turbo_changed       = pyqtSignal(int)   # emits stride: 1, 2, or 4
     individual_selected = pyqtSignal(int)
+    composite_requested     = pyqtSignal(list)   # list of (file_type, (r,g,b), opacity)
+    composite_updated       = pyqtSignal(list)   # same format — live-update existing composite
+    composite_blend_changed = pyqtSignal(str)    # "screen" or "alpha"
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -103,7 +112,9 @@ class Sidebar(QWidget):
         self._file_checks: dict[str, QCheckBox] = {}
         self._file_available: dict[str, bool] = {}
         self._annot_groups: dict[str, QButtonGroup] = {}
-        self._is_open = False
+        self._is_open      = False
+        self._pinned       = False  # True while a color dialog is open
+        self._dialog_grace = False  # True during the post-dialog grace period
 
         self._setup_ui()
         self._setup_animation()
@@ -376,34 +387,37 @@ class Sidebar(QWidget):
         db.addWidget(layout_row)
 
         db.addWidget(_sep())
-        turbo_row = QWidget()
-        turbo_row.setStyleSheet("background: transparent;")
-        trow = QHBoxLayout(turbo_row)
-        trow.setContentsMargins(0, 2, 0, 0)
-        trow.setSpacing(6)
-        trow.addWidget(_mini_label("TURBO MODE"))
-        trow.addStretch()
-        self._turbo_cb = QPushButton("OFF")
-        self._turbo_cb.setCheckable(True)
-        self._turbo_cb.setChecked(False)
-        self._turbo_cb.setFixedSize(36, 20)
-        self._turbo_cb.setStyleSheet(
-            "QPushButton { background: #2a2a2a; color: #666; border: none;"
-            " border-radius: 3px; font-size: 11px; font-weight: bold; }"
-            "QPushButton:checked { background: #147a3f; color: #fff; }"
-            "QPushButton:hover:!checked { background: #333; color: #999; }"
+        ds_row = QWidget()
+        ds_row.setStyleSheet("background: transparent;")
+        drow = QHBoxLayout(ds_row)
+        drow.setContentsMargins(0, 2, 0, 0)
+        drow.setSpacing(6)
+        drow.addWidget(_mini_label("DOWNSAMPLING"))
+        drow.addStretch()
+        _ds_combo_style = (
+            "QComboBox { background: #252525; color: #ccc; border: 1px solid #3a3a3a;"
+            " border-radius: 2px; font-size: 11px; padding: 1px 3px; }"
+            "QComboBox::drop-down { border: none; width: 14px; }"
+            "QComboBox QAbstractItemView { background: #252525; color: #ccc;"
+            " selection-background-color: #147a3f; }"
         )
-        self._turbo_cb.setToolTip(
-            "Load at quarter resolution (stride 4 in all three dimensions).\n"
-            "All view orientations stay proportional; reduces load time and RAM use.\n"
-            "Toggle takes effect on next Load."
+        self._downsample_combo = _ScrollLockCombo()
+        self._downsample_combo.addItem("None", 1)
+        self._downsample_combo.addItem("2×",   2)
+        self._downsample_combo.addItem("4×",   4)
+        self._downsample_combo.setFixedWidth(52)
+        self._downsample_combo.setStyleSheet(_ds_combo_style)
+        self._downsample_combo.setToolTip(
+            "Downsample volumes on load (stride per axis).\n"
+            "2× = half resolution in each dimension.\n"
+            "4× = quarter resolution in each dimension.\n"
+            "Takes effect on the next Load."
         )
-        self._turbo_cb.toggled.connect(
-            lambda chk: self._turbo_cb.setText("ON" if chk else "OFF")
+        self._downsample_combo.currentIndexChanged.connect(
+            lambda _: self.turbo_changed.emit(self._downsample_combo.currentData())
         )
-        self._turbo_cb.toggled.connect(self.turbo_toggled)
-        trow.addWidget(self._turbo_cb)
-        db.addWidget(turbo_row)
+        drow.addWidget(self._downsample_combo)
+        db.addWidget(ds_row)
 
         body.addWidget(self._sec_display)
 
@@ -419,13 +433,175 @@ class Sidebar(QWidget):
         body.addWidget(self._sync_cb)
 
         body.addWidget(_sep())
-        self._placeholder_lbls = []
-        for placeholder in ("Color overlay", "Tagging"):
-            lbl = QLabel(placeholder)
-            lbl.setStyleSheet("color: #4a4a4a; font-size: 12px; padding: 1px 0;")
-            self._placeholder_lbls.append(lbl)
-            body.addWidget(lbl)
+        body.addWidget(_mini_label("COLOR OVERLAY"))
 
+        _combo_style = (
+            "QComboBox { background: #252525; color: #ccc; border: 1px solid #3a3a3a;"
+            " border-radius: 2px; font-size: 11px; padding: 1px 3px; }"
+            "QComboBox::drop-down { border: none; width: 14px; }"
+            "QComboBox QAbstractItemView { background: #252525; color: #ccc;"
+            " selection-background-color: #147a3f; }"
+        )
+        _slider_style = (
+            "QSlider::groove:horizontal { height: 3px; background: #2a2a2a; border-radius: 1px; }"
+            "QSlider::handle:horizontal { width: 10px; height: 10px; margin: -3px 0;"
+            " background: #666; border-radius: 2px; }"
+            "QSlider::sub-page:horizontal { background: #3a3a3a; border-radius: 1px; }"
+        )
+
+        self._overlay_channels = []  # (checkbox, combo, color_btn, opacity_slider)
+        self._overlay_colors   = [(220, 80, 80), (80, 200, 80), (80, 120, 220)]
+        _defaults = [
+            ("original", 0),
+            ("maskseg",  1),
+            ("seg",      2),
+        ]
+        for ch_idx, (ft_default, color_idx) in enumerate(_defaults):
+            row_w = QWidget()
+            row_w.setStyleSheet("background: transparent;")
+            rrow = QHBoxLayout(row_w)
+            rrow.setContentsMargins(0, 1, 0, 1)
+            rrow.setSpacing(4)
+
+            combo = _ScrollLockCombo()
+            combo.addItem("— None —", None)
+            for ft in FILE_TYPE_ORDER:
+                combo.addItem(FILE_TYPE_LABELS[ft], ft)
+            combo.setCurrentIndex(0)
+            combo.setStyleSheet(_combo_style)
+            rrow.addWidget(combo, stretch=1)
+
+            r, g, b = self._overlay_colors[color_idx]
+            color_btn = QPushButton()
+            color_btn.setFixedSize(22, 22)
+            color_btn.setToolTip("Click to pick color")
+            color_btn.setStyleSheet(
+                f"QPushButton {{ background: rgb({r},{g},{b});"
+                " border: 1px solid #555; border-radius: 2px; }"
+                "QPushButton:hover { border: 1px solid #999; }"
+            )
+            color_btn.clicked.connect(
+                lambda _, i=ch_idx: self._pick_overlay_color(i)
+            )
+            rrow.addWidget(color_btn)
+
+            opacity_slider = QSlider(Qt.Orientation.Horizontal)
+            opacity_slider.setRange(0, 100)
+            opacity_slider.setValue(100)
+            opacity_slider.setFixedWidth(54)
+            opacity_slider.setToolTip("Opacity")
+            opacity_slider.setStyleSheet(_slider_style)
+            opacity_slider.valueChanged.connect(lambda _: self._on_composite_controls_changed())
+            rrow.addWidget(opacity_slider)
+
+            self._overlay_channels.append((combo, color_btn, opacity_slider))
+            body.addWidget(row_w)
+
+        blend_row = QWidget()
+        blend_row.setStyleSheet("background: transparent;")
+        brow_l = QHBoxLayout(blend_row)
+        brow_l.setContentsMargins(0, 2, 0, 2)
+        brow_l.setSpacing(6)
+        blend_lbl = QLabel("Overlay mode:")
+        blend_lbl.setStyleSheet("color: #888; font-size: 12px;")
+        brow_l.addWidget(blend_lbl)
+        self._blend_combo = _ScrollLockCombo()
+        self._blend_combo.addItem("Screen", "screen")
+        self._blend_combo.addItem("Alpha",  "alpha")
+        self._blend_combo.setStyleSheet(_combo_style)
+        self._blend_combo.currentIndexChanged.connect(lambda _: self._on_blend_mode_changed())
+        brow_l.addWidget(self._blend_combo, stretch=1)
+        body.addWidget(blend_row)
+
+        self._create_composite_btn = QPushButton("Create Composite")
+        self._create_composite_btn.setStyleSheet(
+            "QPushButton { background: #1a3d26; color: #5fd49a;"
+            " border: 1px solid #2e6e42;"
+            " border-radius: 3px; padding: 5px 8px; font-size: 12px; }"
+            "QPushButton:hover { background: #147a3f; color: #fff;"
+            " border-color: #3a8a52; }"
+        )
+        self._create_composite_btn.clicked.connect(self._on_create_composite)
+        body.addWidget(self._create_composite_btn)
+
+        body.addWidget(_sep())
+        lbl = QLabel("Tagging")
+        lbl.setStyleSheet("color: #4a4a4a; font-size: 12px; padding: 1px 0;")
+        body.addWidget(lbl)
+
+    def _pick_overlay_color(self, idx: int):
+        r, g, b = self._overlay_colors[idx]
+        dlg = QColorDialog(QColor(r, g, b), self)
+        dlg.setWindowTitle("Pick channel color")
+        # Place dialog just to the right of the sidebar so it doesn't trigger close
+        dlg.move(self.mapToGlobal(QPoint(self.width() + 4, 40)))
+
+        self._pinned = True
+        dlg.exec()
+        self._pinned = False
+
+        # If the cursor left while the dialog was open, grant one forgiven poll tick
+        # before actually closing (gives the user time to move back to the sidebar).
+        if not self.rect().contains(self.mapFromGlobal(QCursor.pos())):
+            self._dialog_grace = True
+            self._poll.setInterval(500)  # slow first tick; grace clears it, then normal 80ms
+            self._poll.start()
+
+        color = dlg.selectedColor()
+        if not color.isValid():
+            return
+        self._overlay_colors[idx] = (color.red(), color.green(), color.blue())
+        r, g, b = self._overlay_colors[idx]
+        _, btn, _ = self._overlay_channels[idx]
+        btn.setStyleSheet(
+            f"QPushButton {{ background: rgb({r},{g},{b});"
+            " border: 1px solid #555; border-radius: 2px; }"
+            "QPushButton:hover { border: 1px solid #999; }"
+        )
+        self._on_composite_controls_changed()
+
+    def update_composite_channels(self, open_file_types: list[str]):
+        """Repopulate channel dropdowns to only show currently open file types."""
+        for combo, _, _ in self._overlay_channels:
+            current_data = combo.currentData()
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem("— None —", None)
+            for ft in open_file_types:
+                combo.addItem(FILE_TYPE_LABELS[ft], ft)
+            restore = next(
+                (i + 1 for i, ft in enumerate(open_file_types) if ft == current_data),
+                0,
+            )
+            combo.setCurrentIndex(restore)
+            combo.blockSignals(False)
+
+    def _build_composite_specs(self) -> list:
+        specs = []
+        for i, (combo, _, slider) in enumerate(self._overlay_channels):
+            ft = combo.currentData()
+            if ft is None:
+                continue
+            specs.append((ft, self._overlay_colors[i], slider.value() / 100.0))
+        return specs
+
+    def _on_composite_controls_changed(self):
+        specs = self._build_composite_specs()
+        if specs:
+            self.composite_updated.emit(specs)
+
+    def _on_create_composite(self):
+        specs = self._build_composite_specs()
+        if specs:
+            self.composite_requested.emit(specs)
+
+    @property
+    def composite_blend_mode(self) -> str:
+        return self._blend_combo.currentData()
+
+    def _on_blend_mode_changed(self):
+        self.composite_blend_changed.emit(self._blend_combo.currentData())
+        self._on_composite_controls_changed()
 
     def _build_annotations_section(self, file_types: list[str]):
         body = self._sec_annot.body
@@ -539,17 +715,26 @@ class Sidebar(QWidget):
 
     def enterEvent(self, event):
         self._poll.stop()
+        self._dialog_grace = False
+        self._poll.setInterval(80)
         if not self._is_open:
             self._animate_to(_OPEN_W)
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        if self._is_open:
+        if self._is_open and not self._pinned:
             self._poll.start()
         super().leaveEvent(event)
 
     def _check_cursor(self):
+        if self._pinned:
+            return
         if not self.rect().contains(self.mapFromGlobal(QCursor.pos())):
+            if self._dialog_grace:
+                # First check after dialog — forgive and reset to normal poll speed
+                self._dialog_grace = False
+                self._poll.setInterval(80)
+                return
             self._animate_to(_TRIGGER_W)
             self._poll.stop()
 
