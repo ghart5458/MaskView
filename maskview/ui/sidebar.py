@@ -107,6 +107,8 @@ class Sidebar(QWidget):
     composite_updated       = pyqtSignal(list)   # same format — live-update existing composite
     composite_blend_changed = pyqtSignal(str)    # "screen" or "alpha"
     annotation_changed      = pyqtSignal(str, str)  # (file_type, value: "Pass"/"Review"/"Fail"/"")
+    tags_visible_changed    = pyqtSignal(bool)
+    tag_selected            = pyqtSignal(str, int, int, int, str)  # (file_type, x, y, z, tag_id)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -217,8 +219,8 @@ class Sidebar(QWidget):
         col.addWidget(ca_row)
 
         self._sec_file  = _Section("File",        expanded=True)
-        self._sec_tools = _Section("Tools",       expanded=True)
-        self._sec_annot = _Section("Annotations", expanded=True)
+        self._sec_tools = _Section("Tools",       expanded=False)
+        self._sec_annot = _Section("Annotations", expanded=False)
         self._sec_indiv = _Section("Individuals", expanded=True)
 
         col.addWidget(self._sec_file)
@@ -528,9 +530,46 @@ class Sidebar(QWidget):
         body.addWidget(self._create_composite_btn)
 
         body.addWidget(_sep())
-        lbl = QLabel("Tagging")
-        lbl.setStyleSheet("color: #4a4a4a; font-size: 12px; padding: 1px 0;")
-        body.addWidget(lbl)
+        body.addWidget(_mini_label("TAGGING"))
+        self._show_tags_cb = QCheckBox("Show tags")
+        self._show_tags_cb.setChecked(True)
+        self._show_tags_cb.setStyleSheet("QCheckBox { color: #bbb; font-size: 12px; }")
+        self._show_tags_cb.toggled.connect(self.tags_visible_changed)
+        body.addWidget(self._show_tags_cb)
+
+        self._tag_list_header = QLabel("Current: —")
+        self._tag_list_header.setStyleSheet(
+            "color: #666; font-size: 11px; padding: 1px 0;"
+        )
+        body.addWidget(self._tag_list_header)
+
+        self._tag_list_content = QWidget()
+        self._tag_list_content.setStyleSheet("background: #141414;")
+        self._tag_list_col = QVBoxLayout(self._tag_list_content)
+        self._tag_list_col.setContentsMargins(0, 2, 0, 2)
+        self._tag_list_col.setSpacing(1)
+        self._tag_list_empty_lbl = QLabel("Activate Tag mode on a panel to see tags here")
+        self._tag_list_empty_lbl.setWordWrap(True)
+        self._tag_list_empty_lbl.setStyleSheet(
+            "color: #555; font-size: 11px; padding: 4px 6px;"
+        )
+        self._tag_list_col.addWidget(self._tag_list_empty_lbl)
+        self._tag_list_col.addStretch()
+
+        tag_scroll = QScrollArea()
+        tag_scroll.setWidgetResizable(True)
+        tag_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        tag_scroll.setFixedHeight(100)
+        tag_scroll.setStyleSheet("""
+            QScrollArea { border: 1px solid #2e2e2e; background: #141414; }
+            QScrollBar:vertical { background: #141414; width: 8px; border: none; }
+            QScrollBar::handle:vertical {
+                background: #3a3a3a; border-radius: 3px; min-height: 16px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+        """)
+        tag_scroll.setWidget(self._tag_list_content)
+        body.addWidget(tag_scroll)
 
     def _pick_overlay_color(self, idx: int):
         r, g, b = self._overlay_colors[idx]
@@ -832,6 +871,50 @@ class Sidebar(QWidget):
             self._par_label.setStyleSheet(
                 "color: #aaa; font-size: 12px; font-style: normal; padding: 1px 0;"
             )
+
+    def update_tag_list(self, tags: list, file_type: str) -> None:
+        if file_type:
+            label = FILE_TYPE_LABELS.get(file_type, file_type)
+            self._tag_list_header.setText(f"Current: {label}")
+        else:
+            self._tag_list_header.setText("Current: —")
+
+        while self._tag_list_col.count():
+            item = self._tag_list_col.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if not tags:
+            self._tag_list_empty_lbl = QLabel(
+                "No tags placed yet" if file_type else
+                "Activate Tag mode on a panel to see tags here"
+            )
+            self._tag_list_empty_lbl.setWordWrap(True)
+            self._tag_list_empty_lbl.setStyleSheet(
+                "color: #555; font-size: 11px; padding: 4px 6px;"
+            )
+            self._tag_list_col.addWidget(self._tag_list_empty_lbl)
+            self._tag_list_col.addStretch()
+            return
+
+        for i, tag in enumerate(tags):
+            preview = tag.note[:20] + "…" if len(tag.note) > 20 else (tag.note or "—")
+            btn = QPushButton(f"#{i + 1}  {preview}")
+            btn.setFixedHeight(22)
+            coord_tip = f"({tag.x}, {tag.y}, {tag.z})"
+            btn.setToolTip(f"{coord_tip}\n{tag.note}" if tag.note else coord_tip)
+            btn.setStyleSheet(
+                f"QPushButton {{ background: #141414; color: #ccc; border: none;"
+                f" border-left: 3px solid {tag.color}; padding: 1px 6px;"
+                f" text-align: left; font-size: 11px; }}"
+                "QPushButton:hover { background: #1e2a20; color: #eee; }"
+            )
+            btn.clicked.connect(
+                lambda _, t=tag, ft=file_type:
+                    self.tag_selected.emit(ft, t.x, t.y, t.z, t.id)
+            )
+            self._tag_list_col.addWidget(btn)
+        self._tag_list_col.addStretch()
 
     def set_controls_enabled(self, enabled: bool):
         # Navigation stays active so the user can cancel a slow load by moving elsewhere.

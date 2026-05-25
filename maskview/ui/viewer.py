@@ -1,5 +1,5 @@
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QPoint, QPointF
-from PyQt6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QWheelEvent, QMouseEvent
+from PyQt6.QtGui import QBrush, QColor, QImage, QPainter, QPen, QPixmap, QWheelEvent, QMouseEvent
 from PyQt6.QtWidgets import (
     QGraphicsPixmapItem,
     QGraphicsScene,
@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QSlider,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -16,11 +17,13 @@ import numpy as np
 class VolumeViewer(QWidget):
     """Single-panel volume viewer: scrollable slices, click-to-zoom, drag-to-pan."""
 
-    slice_changed  = pyqtSignal(int)
-    zoom_changed   = pyqtSignal(float)
-    pan_changed    = pyqtSignal(float, float)
-    cursor_moved   = pyqtSignal(float, float)   # scene x, y
-    cursor_left    = pyqtSignal()
+    slice_changed       = pyqtSignal(int)
+    zoom_changed        = pyqtSignal(float)
+    pan_changed         = pyqtSignal(float, float)
+    cursor_moved        = pyqtSignal(float, float)   # scene x, y
+    cursor_left         = pyqtSignal()
+    tag_place_requested = pyqtSignal(int, int, int)  # voxel x, y, z
+    tag_edit_requested  = pyqtSignal(str)            # tag_id
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -33,6 +36,8 @@ class VolumeViewer(QWidget):
         self._threshold_lo     = 0.0
         self._threshold_hi     = 1.0
         self._threshold_rgb    = [44, 230, 127]    # theme green (#2ce67f)
+        self._tags: list       = []
+        self._show_tags        = True
         self._setup_ui()
 
     def _setup_ui(self):
@@ -51,6 +56,8 @@ class VolumeViewer(QWidget):
         self._view.wheel_scroll.connect(self._on_wheel_scroll)
         self._view.cursor_moved.connect(self.cursor_moved)
         self._view.cursor_left.connect(self.cursor_left)
+        self._view.tag_scene_clicked.connect(self._on_tag_scene_clicked)
+        self._view.tag_marker_clicked.connect(self.tag_edit_requested)
         layout.addWidget(self._view, stretch=1)
 
         bar_widget = QWidget()
@@ -143,6 +150,29 @@ class VolumeViewer(QWidget):
         if self._threshold_active:
             self._update_slice()
 
+    def set_tags(self, tags: list, show: bool | None = None):
+        self._tags = list(tags)
+        if show is not None:
+            self._show_tags = show
+        self._update_tag_markers()
+
+    def set_tags_visible(self, visible: bool):
+        self._show_tags = visible
+        self._update_tag_markers()
+
+    def set_tag_mode(self, active: bool):
+        self._view.set_tag_mode(active)
+
+    def highlight_tag(self, tag_id: str):
+        self._view.highlight_tag(tag_id)
+
+    def jump_to_slice(self, z: int):
+        """Navigate to slice z and emit slice_changed (triggers sync across panels)."""
+        if self._data is None:
+            return
+        z = max(0, min(z, self._n_slices() - 1))
+        self._slider.setValue(z)
+
     @property
     def data(self) -> "np.ndarray | None":
         return self._data
@@ -167,6 +197,43 @@ class VolumeViewer(QWidget):
     def current_pan(self) -> tuple[float, float]:
         c = self._view.mapToScene(self._view.viewport().rect().center())
         return c.x(), c.y()
+
+    def _update_tag_markers(self):
+        if not self._show_tags or self._data is None:
+            self._view.set_tag_markers([])
+            return
+        z = self._current_z
+        markers = []
+        for tag in self._tags:
+            if self._orientation == "XY":
+                if tag.z == z:
+                    markers.append((tag.x, tag.y, tag.color, tag.id, tag.note))
+            elif self._orientation == "XZ":
+                if tag.y == z:
+                    markers.append((tag.x, tag.z, tag.color, tag.id, tag.note))
+            else:  # YZ
+                if tag.x == z:
+                    markers.append((tag.y, tag.z, tag.color, tag.id, tag.note))
+        self._view.set_tag_markers(markers)
+
+    def _on_tag_scene_clicked(self, sx: float, sy: float):
+        if self._data is None:
+            return
+        z_dim, y_dim, x_dim = self._data.shape
+        z = self._current_z
+        if self._orientation == "XY":
+            x  = max(0, min(int(sx), x_dim - 1))
+            y  = max(0, min(int(sy), y_dim - 1))
+            vz = z
+        elif self._orientation == "XZ":
+            x  = max(0, min(int(sx), x_dim - 1))
+            y  = z
+            vz = max(0, min(int(sy), z_dim - 1))
+        else:  # YZ
+            x  = z
+            y  = max(0, min(int(sx), y_dim - 1))
+            vz = max(0, min(int(sy), z_dim - 1))
+        self.tag_place_requested.emit(x, y, vz)
 
     def _on_slider_changed(self, value: int):
         self._current_z = value
@@ -231,6 +298,7 @@ class VolumeViewer(QWidget):
         self._pixmap_item.setPixmap(self._to_pixmap(self._get_slice_2d()))
         self._scene.setSceneRect(self._pixmap_item.boundingRect())
         self._update_info()
+        self._update_tag_markers()
 
     def _to_pixmap(self, slice_2d: np.ndarray) -> QPixmap:
         lo, hi = self._display_lo, self._display_hi
@@ -278,11 +346,13 @@ class _PanZoomView(QGraphicsView):
     Scroll wheel          → slice navigation (forwarded to VolumeViewer)
     """
 
-    zoom_changed  = pyqtSignal(float)
-    pan_changed   = pyqtSignal(float, float)
-    wheel_scroll  = pyqtSignal(int)
-    cursor_moved  = pyqtSignal(float, float)   # scene x, y
-    cursor_left   = pyqtSignal()
+    zoom_changed       = pyqtSignal(float)
+    pan_changed        = pyqtSignal(float, float)
+    wheel_scroll       = pyqtSignal(int)
+    cursor_moved       = pyqtSignal(float, float)   # scene x, y
+    cursor_left        = pyqtSignal()
+    tag_scene_clicked  = pyqtSignal(float, float)   # scene x, y for new tag placement
+    tag_marker_clicked = pyqtSignal(str)            # tag_id for edit
 
     # Discrete zoom levels matching FIJI's sequence
     _ZOOM_LEVELS = (
@@ -325,6 +395,13 @@ class _PanZoomView(QGraphicsView):
         self._last_pos: QPoint | None = None
         self._is_panning = False
         self._ext_cursor: QPointF | None = None
+        self._tag_markers: list = []   # list of (col, row, hex_color, tag_id, note)
+        self._tag_mode = False
+        self._highlight_tag_id: str | None = None
+        self._highlight_frame = 0
+        self._highlight_timer = QTimer(self)
+        self._highlight_timer.setInterval(70)
+        self._highlight_timer.timeout.connect(self._highlight_tick)
 
         # Required so mouseMoveEvent fires during hover (not just button-press)
         self.setMouseTracking(True)
@@ -363,16 +440,48 @@ class _PanZoomView(QGraphicsView):
         else:
             sp = self.mapToScene(event.pos())
             self.cursor_moved.emit(sp.x(), sp.y())
+
+            tip = ""
+            for col, row, _color, _tag_id, note in self._tag_markers:
+                tag_vp = self.mapFromScene(QPointF(col, row))
+                dx = event.pos().x() - tag_vp.x()
+                dy = event.pos().y() - tag_vp.y()
+                if dx * dx + dy * dy < 14 ** 2:
+                    tip = note
+                    break
+            if tip:
+                QToolTip.showText(self.mapToGlobal(event.pos()), tip, self)
+            else:
+                QToolTip.hideText()
+
             super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
             if not self._is_panning and self._drag_start is not None:
-                self._apply_zoom(+1, self._drag_start)
+                if self._tag_mode:
+                    click_vp = self._drag_start
+                    hit_id = None
+                    for col, row, _color, tag_id, _note in self._tag_markers:
+                        tag_vp = self.mapFromScene(QPointF(col, row))
+                        dx = click_vp.x() - tag_vp.x()
+                        dy = click_vp.y() - tag_vp.y()
+                        if dx * dx + dy * dy < 14 ** 2:
+                            hit_id = tag_id
+                            break
+                    if hit_id is not None:
+                        self.tag_marker_clicked.emit(hit_id)
+                    else:
+                        sp = self.mapToScene(click_vp)
+                        self.tag_scene_clicked.emit(sp.x(), sp.y())
+                else:
+                    self._apply_zoom(+1, self._drag_start)
             self._is_panning = False
             self._drag_start = None
             self._last_pos = None
-            self.setCursor(Qt.CursorShape.ArrowCursor)
+            self.setCursor(
+                Qt.CursorShape.CrossCursor if self._tag_mode else Qt.CursorShape.ArrowCursor
+            )
             event.accept()
         else:
             super().mouseReleaseEvent(event)
@@ -406,19 +515,67 @@ class _PanZoomView(QGraphicsView):
             self._ext_cursor = None
             self.viewport().update()
 
+    def set_tag_markers(self, markers: list):
+        self._tag_markers = markers
+        self.viewport().update()
+
+    def highlight_tag(self, tag_id: str):
+        self._highlight_tag_id = tag_id
+        self._highlight_frame  = 16
+        self._highlight_timer.start()
+        self.viewport().update()
+
+    def _highlight_tick(self):
+        self._highlight_frame -= 1
+        self.viewport().update()
+        if self._highlight_frame <= 0:
+            self._highlight_timer.stop()
+            self._highlight_tag_id = None
+
+    def set_tag_mode(self, active: bool):
+        self._tag_mode = active
+        self.setCursor(Qt.CursorShape.CrossCursor if active else Qt.CursorShape.ArrowCursor)
+
     def drawForeground(self, painter, rect):
         super().drawForeground(painter, rect)
-        if self._ext_cursor is None:
-            return
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        x, y = self._ext_cursor.x(), self._ext_cursor.y()
-        arm = 12 / max(self.transform().m11(), 0.001)
-        pen = QPen(QColor(0, 210, 255, 255))
-        pen.setCosmetic(True)
-        pen.setWidthF(1.5)
-        painter.setPen(pen)
-        painter.drawLine(QPointF(x - arm, y), QPointF(x + arm, y))
-        painter.drawLine(QPointF(x, y - arm), QPointF(x, y + arm))
+
+        if self._ext_cursor is not None:
+            x, y = self._ext_cursor.x(), self._ext_cursor.y()
+            arm = 12 / max(self.transform().m11(), 0.001)
+            pen = QPen(QColor(0, 210, 255, 255))
+            pen.setCosmetic(True)
+            pen.setWidthF(1.5)
+            painter.setPen(pen)
+            painter.drawLine(QPointF(x - arm, y), QPointF(x + arm, y))
+            painter.drawLine(QPointF(x, y - arm), QPointF(x, y + arm))
+
+        if self._tag_markers:
+            zoom = max(self.transform().m11(), 0.001)
+            r = 7 / zoom
+            border_pen = QPen(QColor(255, 255, 255, 200))
+            border_pen.setCosmetic(True)
+            border_pen.setWidthF(2.0)
+            painter.setPen(border_pen)
+            for col, row, hex_color, _tag_id, _note in self._tag_markers:
+                color = QColor(hex_color)
+                painter.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 200)))
+                painter.drawEllipse(QPointF(col, row), r, r)
+
+            if self._highlight_tag_id and self._highlight_frame > 0:
+                zoom = max(self.transform().m11(), 0.001)
+                frac = self._highlight_frame / 16
+                ring_r = (7 + (1.0 - frac) * 16) / zoom
+                alpha  = int(frac * 230)
+                ring_pen = QPen(QColor(255, 255, 255, alpha))
+                ring_pen.setCosmetic(True)
+                ring_pen.setWidthF(2.5)
+                painter.setPen(ring_pen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                for col, row, _color, tag_id, _note in self._tag_markers:
+                    if tag_id == self._highlight_tag_id:
+                        painter.drawEllipse(QPointF(col, row), ring_r, ring_r)
+                        break
 
     def _next_zoom(self, direction: int) -> float:
         """Return the next discrete zoom level up (+1) or down (-1) from current."""

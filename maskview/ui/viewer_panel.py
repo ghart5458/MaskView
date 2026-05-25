@@ -1,5 +1,5 @@
 from PyQt6.QtCore import QEvent, QObject, QTimer, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QPainter, QPen
+from PyQt6.QtGui import QColor, QCursor, QPainter, QPen
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 import numpy as np
 
 from ..files.resolver import FILE_TYPE_LABELS
+from ..tags.store import TagStore
 from .viewer import VolumeViewer
 
 
@@ -796,6 +797,109 @@ class _BrightnessContrastOverlay(QFrame):
         super().leaveEvent(event)
 
 
+# ── Tag edit dialog ───────────────────────────────────────────────────────────
+
+class _TagEditDialog(QDialog):
+    """Small dialog for creating or editing a tag (note + color)."""
+
+    def __init__(self, note: str = "", color: str = "#ff4444",
+                 is_new: bool = True, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("New Tag" if is_new else "Edit Tag")
+        self.setFixedWidth(260)
+        self.setStyleSheet(
+            "QDialog { background: #1e1e1e; }"
+            "QLabel { color: #ccc; font-size: 12px; }"
+            "QLineEdit { background: #252525; color: #ddd; border: 1px solid #444;"
+            " border-radius: 3px; font-size: 12px; padding: 3px 5px; }"
+            "QPushButton { background: #333; color: #ccc; border: 1px solid #555;"
+            " border-radius: 3px; font-size: 12px; padding: 4px 12px; }"
+            "QPushButton:hover { background: #444; }"
+        )
+        self._color   = color
+        self._deleted = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+
+        layout.addWidget(QLabel("Note"))
+        self._note_edit = QLineEdit(note)
+        self._note_edit.setPlaceholderText("Optional description…")
+        self._note_edit.returnPressed.connect(self.accept)
+        layout.addWidget(self._note_edit)
+
+        color_row = QHBoxLayout()
+        color_row.setSpacing(8)
+        color_row.addWidget(QLabel("Color"))
+        self._color_btn = QPushButton()
+        self._color_btn.setFixedSize(24, 24)
+        self._color_btn.clicked.connect(self._pick_color)
+        self._refresh_color_btn()
+        color_row.addWidget(self._color_btn)
+        color_row.addStretch()
+        layout.addLayout(color_row)
+        layout.addSpacing(4)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(6)
+        if not is_new:
+            del_btn = QPushButton("Delete")
+            del_btn.setStyleSheet(
+                "QPushButton { background: #4a1616; color: #e06060;"
+                " border: 1px solid #6a2020; }"
+                "QPushButton:hover { background: #5a1c1c; }"
+            )
+            del_btn.clicked.connect(self._on_delete)
+            btn_row.addWidget(del_btn)
+        btn_row.addStretch()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+        ok_btn = QPushButton("OK")
+        ok_btn.setStyleSheet(
+            "QPushButton { background: #1a3d26; color: #5fd49a;"
+            " border: 1px solid #2e6e42; }"
+            "QPushButton:hover { background: #147a3f; color: #fff; }"
+        )
+        ok_btn.clicked.connect(self.accept)
+        btn_row.addWidget(ok_btn)
+        layout.addLayout(btn_row)
+        self.adjustSize()
+
+    def _pick_color(self):
+        dlg = _ColorSwatchPicker(QColor(self._color), self)
+        dlg.move(self._color_btn.mapToGlobal(self._color_btn.rect().bottomLeft()))
+        dlg.exec()
+        color = dlg.chosen_color()
+        if color is not None:
+            self._color = color.name()
+            self._refresh_color_btn()
+
+    def _refresh_color_btn(self):
+        self._color_btn.setStyleSheet(
+            f"QPushButton {{ background: {self._color}; border: 1px solid #666;"
+            " border-radius: 2px; }"
+            "QPushButton:hover { border: 1px solid #aaa; }"
+        )
+
+    def _on_delete(self):
+        self._deleted = True
+        self.accept()
+
+    @property
+    def note(self) -> str:
+        return self._note_edit.text().strip()
+
+    @property
+    def color(self) -> str:
+        return self._color
+
+    @property
+    def deleted(self) -> bool:
+        return self._deleted
+
+
 # ── Loading spinner ───────────────────────────────────────────────────────────
 
 class _LoadingSpinner(QWidget):
@@ -849,12 +953,42 @@ class _LoadingSpinner(QWidget):
                    Qt.AlignmentFlag.AlignHCenter, self._label)
 
 
+# ── Draggable title bar ───────────────────────────────────────────────────────
+
+class _DraggableTitleBar(QWidget):
+    drag_started = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._press_pos = None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._press_pos = event.pos()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._press_pos is not None:
+            if (event.pos() - self._press_pos).manhattanLength() > 6:
+                self._press_pos = None
+                self.drag_started.emit()
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._press_pos = None
+        event.accept()
+
+
 # ── ViewerPanel ───────────────────────────────────────────────────────────────
 
 class ViewerPanel(QWidget):
     """VolumeViewer with title bar, close button, and floating hist/threshold overlays."""
 
-    closed = pyqtSignal()
+    closed       = pyqtSignal()
+    drag_started = pyqtSignal()
+    tags_changed = pyqtSignal(list, str)  # (tags, file_type) — for sidebar tag list
 
     _BTN_W      = 52
     _BTN_H      = 22
@@ -862,15 +996,17 @@ class ViewerPanel(QWidget):
 
     def __init__(self, file_type: str, parent=None):
         super().__init__(parent)
-        self._file_type = file_type
+        self._file_type  = file_type
         self._filters: list[_HoverFilter] = []
+        self._tag_store: TagStore | None  = None
+        self._show_tags  = True
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
         # ── Title bar ────────────────────────────────────────────────────────
-        title_bar = QWidget()
+        title_bar = _DraggableTitleBar()
         title_bar.setObjectName("titleBar")
         title_bar.setFixedHeight(30)
         title_bar.setStyleSheet("#titleBar { background: #2d2d2d; }")
@@ -900,6 +1036,8 @@ class ViewerPanel(QWidget):
         )
         close_btn.clicked.connect(self.closed)
         bar.addWidget(close_btn)
+        self._title_bar = title_bar
+        title_bar.drag_started.connect(self.drag_started)
         layout.addWidget(title_bar)
 
         # ── Viewer ───────────────────────────────────────────────────────────
@@ -924,6 +1062,18 @@ class ViewerPanel(QWidget):
         self._bc_btn.setFixedSize(self._BTN_W, self._BTN_H)
         self._bc_btn.setStyleSheet(_btn_style)
 
+        self._tag_btn = QPushButton("Tag", self)
+        self._tag_btn.setCheckable(True)
+        self._tag_btn.setFixedSize(self._BTN_W, self._BTN_H)
+        self._tag_btn.setStyleSheet(
+            "QPushButton { background: rgba(30,30,30,180); color: #888;"
+            " border: 1px solid #444; border-radius: 3px; font-size: 10px; }"
+            "QPushButton:hover { background: rgba(60,60,60,220); color: #eee; }"
+            "QPushButton:checked { background: rgba(10,50,25,200); color: #2ce67f;"
+            " border-color: #147a3f; }"
+        )
+        self._tag_btn.toggled.connect(self._on_tag_mode_toggled)
+
         # ── Floating overlays (not in layout — positioned absolutely) ────────
         self._hist_overlay = _HistogramOverlay(self)
         self._thr_overlay  = _ThresholdOverlay(self)
@@ -934,6 +1084,8 @@ class ViewerPanel(QWidget):
         self._thr_overlay.color_changed.connect(self._viewer.set_threshold_color)
         self._bc_overlay.range_changed.connect(self._on_bc_range_changed)
         self._viewer.slice_changed.connect(self._refresh_hist)
+        self._viewer.tag_place_requested.connect(self._on_tag_place_requested)
+        self._viewer.tag_edit_requested.connect(self._on_tag_edit_requested)
 
         self._wire_btn(self._hist_btn, self._hist_overlay, self._thr_overlay, self._bc_overlay)
         self._wire_btn(self._thr_btn,  self._thr_overlay,  self._hist_overlay, self._bc_overlay)
@@ -951,6 +1103,9 @@ class ViewerPanel(QWidget):
         stem = path.stem if path else ""
         self._filename_lbl.setText(stem)
         self._filename_lbl.setToolTip(str(path) if path else "")
+        if path:
+            self._tag_store = TagStore(path)
+            self._viewer.set_tags(self._tag_store.tags)
 
     def load(self, data: np.ndarray, lo: float, hi: float):
         self._viewer.load(data, lo, hi)
@@ -967,6 +1122,23 @@ class ViewerPanel(QWidget):
     def stop_loading(self):
         self._spinner.stop()
 
+    def set_tags_visible(self, visible: bool):
+        self._show_tags = visible
+        self._viewer.set_tags_visible(visible)
+
+    def highlight_tag(self, tag_id: str):
+        self._viewer.highlight_tag(tag_id)
+
+    def current_tags(self) -> tuple:
+        tags = self._tag_store.tags if self._tag_store else []
+        return (tags, self._file_type)
+
+    def set_swap_highlight(self, active: bool):
+        style = ("#titleBar { background: #2d2d2d; border: 2px solid #2ce67f; }"
+                 if active else
+                 "#titleBar { background: #2d2d2d; }")
+        self._title_bar.setStyleSheet(style)
+
     @property
     def viewer(self) -> VolumeViewer:
         return self._viewer
@@ -976,6 +1148,41 @@ class ViewerPanel(QWidget):
         return self._file_type
 
     # ── Internal ──────────────────────────────────────────────────────────────
+
+    def _on_tag_mode_toggled(self, active: bool):
+        self._viewer.set_tag_mode(active)
+        if active and self._tag_store is not None:
+            self.tags_changed.emit(self._tag_store.tags, self._file_type)
+
+    def _on_tag_place_requested(self, x: int, y: int, z: int):
+        if self._tag_store is None:
+            return
+        tag = self._tag_store.add(x, y, z)
+        dlg = _TagEditDialog(tag.note, tag.color, is_new=True, parent=self)
+        dlg.move(QCursor.pos())
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            if dlg.note != tag.note or dlg.color != tag.color:
+                self._tag_store.update(tag.id, dlg.note, dlg.color)
+        else:
+            self._tag_store.remove(tag.id)
+        self._viewer.set_tags(self._tag_store.tags)
+        self.tags_changed.emit(self._tag_store.tags, self._file_type)
+
+    def _on_tag_edit_requested(self, tag_id: str):
+        if self._tag_store is None:
+            return
+        tag = next((t for t in self._tag_store.tags if t.id == tag_id), None)
+        if tag is None:
+            return
+        dlg = _TagEditDialog(tag.note, tag.color, is_new=False, parent=self)
+        dlg.move(QCursor.pos())
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            if dlg.deleted:
+                self._tag_store.remove(tag_id)
+            else:
+                self._tag_store.update(tag_id, dlg.note, dlg.color)
+        self._viewer.set_tags(self._tag_store.tags)
+        self.tags_changed.emit(self._tag_store.tags, self._file_type)
 
     def _wire_btn(self, btn: QPushButton, overlay, *others):
         def _enter():
@@ -1034,8 +1241,9 @@ class ViewerPanel(QWidget):
         self._hist_btn.move(btn_x, title_h + m)
         self._thr_btn.move(btn_x,  title_h + m + bh + gap)
         self._bc_btn.move(btn_x,   title_h + m + 2 * (bh + gap))
+        self._tag_btn.move(btn_x,  title_h + m + 3 * (bh + gap))
 
-        overlay_y = title_h + m + 3 * bh + 2 * gap + 2
+        overlay_y = title_h + m + 4 * bh + 3 * gap + 2
         for ov in (self._hist_overlay, self._thr_overlay, self._bc_overlay):
             ox = max(0, self.width() - ov.width() - m)
             ov.move(ox, overlay_y)

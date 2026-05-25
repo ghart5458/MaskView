@@ -1,7 +1,7 @@
 import numpy as np
-from PyQt6.QtCore import QPoint, QRect, QTimer, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QPainter
-from PyQt6.QtWidgets import QSplitter, QVBoxLayout, QWidget
+from PyQt6.QtCore import QEvent, QPoint, QRect, QTimer, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QCursor, QPainter
+from PyQt6.QtWidgets import QApplication, QSplitter, QVBoxLayout, QWidget
 
 from .composite_panel import COMPOSITE_TYPE, CompositePanel
 from .viewer_panel import ViewerPanel
@@ -56,8 +56,9 @@ class MultiViewer(QWidget):
     via set_orientation / set_layout_mode / set_sync.
     """
 
-    panel_closed              = pyqtSignal(str)  # file_type of the closed panel
-    composite_target_selected = pyqtSignal(str)  # file_type of the panel to replace
+    panel_closed              = pyqtSignal(str)       # file_type of the closed panel
+    composite_target_selected = pyqtSignal(str)       # file_type of the panel to replace
+    panel_tags_changed        = pyqtSignal(list, str) # (tags, file_type) forwarded from panels
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -67,6 +68,9 @@ class MultiViewer(QWidget):
         self._layout_mode  = "2×2"
         self._bottom_dummy: QWidget | None = None
         self._selection_overlay: _SelectionOverlay | None = None
+        self._last_active_panel = None
+        self._dragging_panel    = None
+        self._drag_hover        = None
         self._setup_ui()
 
     def _setup_ui(self):
@@ -210,6 +214,15 @@ class MultiViewer(QWidget):
         self._layout_mode = mode
         self._rebuild_layout()
 
+    @property
+    def orientation(self) -> str:
+        return self._orientation
+
+    def set_tags_visible(self, visible: bool):
+        for panel in self._panels:
+            if hasattr(panel, "set_tags_visible"):
+                panel.set_tags_visible(visible)
+
     def set_sync(self, enabled: bool):
         self._sync_enabled = enabled
         if enabled and len(self._panels) > 1:
@@ -277,6 +290,10 @@ class MultiViewer(QWidget):
         v.pan_changed.connect(self._on_pan_changed)
         v.cursor_moved.connect(self._on_cursor_moved)
         v.cursor_left.connect(self._on_cursor_left)
+        if hasattr(panel, "tags_changed"):
+            panel.tags_changed.connect(self.panel_tags_changed)
+        if hasattr(panel, "drag_started"):
+            panel.drag_started.connect(lambda p=panel: self._on_drag_started(p))
 
     def _on_slice_changed(self, z: int):
         if not self._sync_enabled:
@@ -303,9 +320,15 @@ class MultiViewer(QWidget):
                 p.viewer.set_pan(x, y)
 
     def _on_cursor_moved(self, x: float, y: float):
+        src = self.sender()
+        src_panel = next((p for p in self._panels if p.viewer is src), None)
+        if src_panel is not None and src_panel is not self._last_active_panel:
+            self._last_active_panel = src_panel
+            if hasattr(src_panel, "current_tags"):
+                tags, ft = src_panel.current_tags()
+                self.panel_tags_changed.emit(tags, ft)
         if not self._sync_enabled:
             return
-        src = self.sender()
         for p in self._panels:
             if p.viewer is not src:
                 p.viewer.set_external_cursor(x, y)
@@ -315,3 +338,53 @@ class MultiViewer(QWidget):
         for p in self._panels:
             if p.viewer is not src:
                 p.viewer.clear_external_cursor()
+
+    # ── Panel drag-to-reorder ─────────────────────────────────────────────────
+
+    def _on_drag_started(self, panel):
+        self._dragging_panel = panel
+        self._drag_hover     = None
+        QApplication.instance().installEventFilter(self)
+        QApplication.setOverrideCursor(Qt.CursorShape.ClosedHandCursor)
+
+    def _panel_at(self, gpos):
+        for p in self._panels:
+            if p is self._dragging_panel:
+                continue
+            local = p.mapFromGlobal(gpos)
+            if p.rect().contains(local):
+                return p
+        return None
+
+    def _update_drag(self, gpos):
+        target = self._panel_at(gpos)
+        if target is not self._drag_hover:
+            if self._drag_hover is not None and hasattr(self._drag_hover, "set_swap_highlight"):
+                self._drag_hover.set_swap_highlight(False)
+            self._drag_hover = target
+            if target is not None and hasattr(target, "set_swap_highlight"):
+                target.set_swap_highlight(True)
+
+    def _finish_drag(self, gpos):
+        target = self._panel_at(gpos)
+        if self._drag_hover is not None and hasattr(self._drag_hover, "set_swap_highlight"):
+            self._drag_hover.set_swap_highlight(False)
+        if target is not None and target is not self._dragging_panel:
+            i = self._panels.index(self._dragging_panel)
+            j = self._panels.index(target)
+            self._panels[i], self._panels[j] = self._panels[j], self._panels[i]
+            self._rebuild_layout()
+        self._dragging_panel = None
+        self._drag_hover     = None
+        QApplication.instance().removeEventFilter(self)
+        QApplication.restoreOverrideCursor()
+
+    def eventFilter(self, obj, event):
+        if self._dragging_panel is None:
+            return False
+        t = event.type()
+        if t == QEvent.Type.MouseMove:
+            self._update_drag(QCursor.pos())
+        elif t == QEvent.Type.MouseButtonRelease:
+            self._finish_drag(QCursor.pos())
+        return False

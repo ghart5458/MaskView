@@ -216,6 +216,9 @@ class MainWindow(QMainWindow):
         self._sidebar.composite_blend_changed.connect(self._on_blend_changed)
 
         self._sidebar.annotation_changed.connect(self._on_annotation_changed)
+        self._sidebar.tags_visible_changed.connect(self._viewer.set_tags_visible)
+        self._sidebar.tag_selected.connect(self._on_tag_selected)
+        self._viewer.panel_tags_changed.connect(self._sidebar.update_tag_list)
 
         self._viewer.panel_closed.connect(self._on_panel_closed)
         self._viewer.composite_target_selected.connect(self._on_composite_target_selected)
@@ -319,6 +322,7 @@ class MainWindow(QMainWindow):
         self._viewer.clear()
         self._refresh_annotations([])
         self._update_composite_channels()
+        self._sidebar.update_tag_list([], "")
         self._launch_loader(ind, file_types)
 
     def _launch_loader(self, ind: Individual, file_types: list[str]):
@@ -605,6 +609,15 @@ class MainWindow(QMainWindow):
         if fts and 0 <= self._current_idx < len(self._individuals):
             ind = self._individuals[self._current_idx]
             self._sidebar.set_annotations(self._annot_mgr.get_row(ind.oldname))
+
+    def _on_tag_selected(self, file_type: str, x: int, y: int, z: int, tag_id: str) -> None:
+        panel = next((p for p in self._viewer.panels if p.file_type == file_type), None)
+        if panel is None:
+            return
+        orientation = self._viewer.orientation
+        slice_idx = z if orientation == "XY" else (y if orientation == "XZ" else x)
+        panel.viewer.jump_to_slice(slice_idx)
+        panel.highlight_tag(tag_id)
 
     def _on_annotation_changed(self, ft: str, value: str) -> None:
         if self._current_idx < 0:
