@@ -494,6 +494,308 @@ def _otsu_threshold(data: np.ndarray) -> float:
     return float(centers[int(np.argmax(w0 * w1 * (mu0 - mu1) ** 2))])
 
 
+# ── Brightness / Contrast overlay ────────────────────────────────────────────
+
+class _BrightnessContrastOverlay(QFrame):
+    range_changed = pyqtSignal(float, float)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("bcOverlay")
+        self.setStyleSheet(
+            f"#bcOverlay {{ background: {_OVERLAY_BG}; border: 1px solid {_OVERLAY_BORDER};"
+            f" border-radius: 4px; }}"
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setFixedWidth(236)
+
+        self._data_min   = 0.0
+        self._data_max   = 1.0
+        self._lo         = 0.0
+        self._hi         = 1.0
+        self._stack_data: np.ndarray | None = None
+        self._slice_data: np.ndarray | None = None
+        self._updating   = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        self._canvas = _HistCanvas()
+        layout.addWidget(self._canvas)
+
+        self._full_stack_cb = QCheckBox("Full stack")
+        self._full_stack_cb.setStyleSheet("color: #ccc; font-size: 12px;")
+        self._full_stack_cb.setChecked(True)
+        self._full_stack_cb.stateChanged.connect(self._draw_hist)
+        layout.addWidget(self._full_stack_cb)
+
+        _slider_style = """
+            QSlider::groove:horizontal { height: 4px; background: #2a2a2a; border-radius: 2px; }
+            QSlider::handle:horizontal {
+                width: 14px; height: 14px; margin: -5px 0;
+                background: #8a8a8a; border-radius: 2px;
+            }
+            QSlider::handle:horizontal:hover { background: #bbb; }
+            QSlider::sub-page:horizontal { background: #3a3a3a; border-radius: 2px; }
+        """
+        _edit_style = (
+            "QLineEdit { background: #222; color: #ccc; border: 1px solid #444;"
+            " border-radius: 3px; font-size: 11px; padding: 1px 4px; }"
+        )
+        _label_style = "color: #ccc; font-size: 12px;"
+
+        for name, attr in (("Min", "lo"), ("Max", "hi")):
+            row = QHBoxLayout()
+            row.setSpacing(6)
+            lbl = QLabel(name)
+            lbl.setStyleSheet(_label_style)
+            lbl.setFixedWidth(36)
+            row.addWidget(lbl)
+            slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setRange(0, 1000)
+            slider.setStyleSheet(_slider_style)
+            row.addWidget(slider, stretch=1)
+            box = QLineEdit()
+            box.setFixedWidth(54)
+            box.setStyleSheet(_edit_style)
+            row.addWidget(box)
+            layout.addLayout(row)
+            setattr(self, f"_slider_{attr}", slider)
+            setattr(self, f"_box_{attr}", box)
+
+        self._slider_lo.valueChanged.connect(lambda v: self._min_max_moved("lo", v))
+        self._slider_hi.valueChanged.connect(lambda v: self._min_max_moved("hi", v))
+        self._box_lo.editingFinished.connect(lambda: self._box_edited("lo"))
+        self._box_hi.editingFinished.connect(lambda: self._box_edited("hi"))
+
+        for name, attr in (("Bright", "brightness"), ("Contr", "contrast")):
+            row = QHBoxLayout()
+            row.setSpacing(6)
+            lbl = QLabel(name)
+            lbl.setStyleSheet(_label_style)
+            lbl.setFixedWidth(36)
+            row.addWidget(lbl)
+            slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setRange(0, 1000)
+            slider.setValue(500)
+            slider.setStyleSheet(_slider_style)
+            row.addWidget(slider, stretch=1)
+            layout.addLayout(row)
+            setattr(self, f"_slider_{attr}", slider)
+
+        self._slider_brightness.valueChanged.connect(self._brightness_moved)
+        self._slider_contrast.valueChanged.connect(self._contrast_moved)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(6)
+        _btn_style = (
+            "QPushButton { background: #333; color: #ccc; border: 1px solid #555;"
+            " border-radius: 3px; font-size: 11px; padding: 3px 8px; }"
+            "QPushButton:hover { background: #444; }"
+        )
+        auto_btn = QPushButton("Auto")
+        auto_btn.setStyleSheet(_btn_style)
+        auto_btn.clicked.connect(self._auto)
+        btn_row.addWidget(auto_btn)
+        reset_btn = QPushButton("Reset")
+        reset_btn.setStyleSheet(_btn_style)
+        reset_btn.clicked.connect(self._reset)
+        btn_row.addWidget(reset_btn)
+        layout.addLayout(btn_row)
+
+        self.adjustSize()
+        self.hide()
+
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.setInterval(_HIDE_MS)
+        self._hide_timer.timeout.connect(self.hide)
+
+    # ── Public API ────────────────────────────────────────────────────────────
+
+    def setup(self, data: np.ndarray, lo: float, hi: float):
+        self._stack_data = data
+        self._slice_data = None
+        self._data_min   = float(data.min())
+        self._data_max   = float(data.max())
+        self._lo = lo
+        self._hi = hi
+        self._sync_controls()
+
+    def refresh_hist(self, stack: "np.ndarray | None", slc: "np.ndarray | None"):
+        self._stack_data = stack
+        self._slice_data = slc
+        if self.isVisible():
+            self._draw_hist()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._draw_hist()
+
+    # ── Internal ──────────────────────────────────────────────────────────────
+
+    def _draw_hist(self):
+        data = self._stack_data if self._full_stack_cb.isChecked() else self._slice_data
+        if data is not None:
+            self._canvas.refresh(data, self._lo, self._hi)
+
+    def _sync_controls(self):
+        self._updating = True
+        dmin, dmax = self._data_min, self._data_max
+        drange = dmax - dmin or 1.0
+        width  = self._hi - self._lo
+
+        def _to_int(v: float) -> int:
+            return int(max(0, min(1000, (v - dmin) / drange * 1000)))
+
+        self._slider_lo.setValue(_to_int(self._lo))
+        self._slider_hi.setValue(_to_int(self._hi))
+        self._box_lo.setText(f"{self._lo:.0f}")
+        self._box_hi.setText(f"{self._hi:.0f}")
+
+        center = (self._lo + self._hi) / 2
+        b_val  = int(max(0, min(1000, (center - dmin) / drange * 1000)))
+        self._slider_brightness.setValue(b_val)
+
+        w_ratio = width / drange if drange > 0 else 1.0
+        if w_ratio >= 1.0:
+            c_val = int(max(0, 500 - (w_ratio - 1.0) / 2.0 * 500))
+        else:
+            c_val = int(500 + (1.0 - w_ratio) / 0.999 * 500)
+        self._slider_contrast.setValue(int(max(0, min(1000, c_val))))
+
+        self._updating = False
+        if self.isVisible():
+            self._draw_hist()
+
+    def _to_data_val(self, slider_int: int) -> float:
+        drange = self._data_max - self._data_min or 1.0
+        return self._data_min + slider_int / 1000.0 * drange
+
+    def _sync_bc_sliders(self):
+        drange = self._data_max - self._data_min or 1.0
+        width  = self._hi - self._lo
+        center = (self._lo + self._hi) / 2
+        b_val  = int(max(0, min(1000, (center - self._data_min) / drange * 1000)))
+        self._slider_brightness.setValue(b_val)
+        w_ratio = width / drange if drange > 0 else 1.0
+        if w_ratio >= 1.0:
+            c_val = int(max(0, 500 - (w_ratio - 1.0) / 2.0 * 500))
+        else:
+            c_val = int(500 + (1.0 - w_ratio) / 0.999 * 500)
+        self._slider_contrast.setValue(int(max(0, min(1000, c_val))))
+
+    def _sync_minmax_sliders(self):
+        drange = self._data_max - self._data_min or 1.0
+        def _to_int(v: float) -> int:
+            return int(max(0, min(1000, (v - self._data_min) / drange * 1000)))
+        self._slider_lo.setValue(_to_int(self._lo))
+        self._slider_hi.setValue(_to_int(self._hi))
+        self._box_lo.setText(f"{self._lo:.0f}")
+        self._box_hi.setText(f"{self._hi:.0f}")
+
+    def _min_max_moved(self, which: str, v: int):
+        if self._updating:
+            return
+        val = self._to_data_val(v)
+        if which == "lo":
+            self._lo = val
+            self._box_lo.setText(f"{val:.0f}")
+        else:
+            self._hi = val
+            self._box_hi.setText(f"{val:.0f}")
+        self._updating = True
+        self._sync_bc_sliders()
+        self._updating = False
+        self.range_changed.emit(self._lo, self._hi)
+        if self.isVisible():
+            self._draw_hist()
+
+    def _box_edited(self, which: str):
+        if self._updating:
+            return
+        box = self._box_lo if which == "lo" else self._box_hi
+        try:
+            val = float(box.text())
+        except ValueError:
+            return
+        val = max(self._data_min, min(self._data_max, val))
+        if which == "lo":
+            self._lo = val
+        else:
+            self._hi = val
+        self._sync_controls()
+        self.range_changed.emit(self._lo, self._hi)
+
+    def _brightness_moved(self, v: int):
+        if self._updating:
+            return
+        drange = self._data_max - self._data_min or 1.0
+        width  = self._hi - self._lo
+        new_center = self._data_min + v / 1000.0 * drange
+        lo = new_center - width / 2
+        hi = new_center + width / 2
+        if lo < self._data_min:
+            lo = self._data_min
+            hi = lo + width
+        if hi > self._data_max:
+            hi = self._data_max
+            lo = hi - width
+        self._lo, self._hi = lo, hi
+        self._updating = True
+        self._sync_minmax_sliders()
+        self._updating = False
+        self.range_changed.emit(self._lo, self._hi)
+        if self.isVisible():
+            self._draw_hist()
+
+    def _contrast_moved(self, v: int):
+        if self._updating:
+            return
+        drange = self._data_max - self._data_min or 1.0
+        center  = (self._lo + self._hi) / 2
+        w_ratio = 3.0 - v / 250.0 if v <= 500 else 1.0 - 0.999 * (v - 500) / 500.0
+        width   = drange * max(w_ratio, 0.001)
+        self._lo = center - width / 2
+        self._hi = center + width / 2
+        self._updating = True
+        self._sync_minmax_sliders()
+        self._updating = False
+        self.range_changed.emit(self._lo, self._hi)
+        if self.isVisible():
+            self._draw_hist()
+
+    def _auto(self):
+        from ..files.loader import compute_display_range
+        if self._stack_data is None:
+            return
+        lo, hi = compute_display_range(self._stack_data)
+        self._lo, self._hi = float(lo), float(hi)
+        self._sync_controls()
+        self.range_changed.emit(self._lo, self._hi)
+
+    def _reset(self):
+        self._lo = self._data_min
+        self._hi = self._data_max
+        self._sync_controls()
+        self.range_changed.emit(self._lo, self._hi)
+
+    def start_hide(self):
+        self._hide_timer.start()
+
+    def cancel_hide(self):
+        self._hide_timer.stop()
+
+    def enterEvent(self, event):
+        self.cancel_hide()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.start_hide()
+        super().leaveEvent(event)
+
+
 # ── Loading spinner ───────────────────────────────────────────────────────────
 
 class _LoadingSpinner(QWidget):
@@ -618,17 +920,24 @@ class ViewerPanel(QWidget):
         self._thr_btn.setFixedSize(self._BTN_W, self._BTN_H)
         self._thr_btn.setStyleSheet(_btn_style)
 
+        self._bc_btn = QPushButton("B/C", self)
+        self._bc_btn.setFixedSize(self._BTN_W, self._BTN_H)
+        self._bc_btn.setStyleSheet(_btn_style)
+
         # ── Floating overlays (not in layout — positioned absolutely) ────────
         self._hist_overlay = _HistogramOverlay(self)
         self._thr_overlay  = _ThresholdOverlay(self)
+        self._bc_overlay   = _BrightnessContrastOverlay(self)
 
         self._thr_overlay.range_changed.connect(self._on_threshold_range)
         self._thr_overlay.toggled.connect(self._on_threshold_toggled)
         self._thr_overlay.color_changed.connect(self._viewer.set_threshold_color)
+        self._bc_overlay.range_changed.connect(self._on_bc_range_changed)
         self._viewer.slice_changed.connect(self._refresh_hist)
 
-        self._wire_btn(self._hist_btn, self._hist_overlay, self._thr_overlay)
-        self._wire_btn(self._thr_btn,  self._thr_overlay,  self._hist_overlay)
+        self._wire_btn(self._hist_btn, self._hist_overlay, self._thr_overlay, self._bc_overlay)
+        self._wire_btn(self._thr_btn,  self._thr_overlay,  self._hist_overlay, self._bc_overlay)
+        self._wire_btn(self._bc_btn,   self._bc_overlay,   self._hist_overlay, self._thr_overlay)
 
         # Loading spinner (overlaid, hidden until start_loading is called)
         self._spinner = _LoadingSpinner(
@@ -647,6 +956,7 @@ class ViewerPanel(QWidget):
         self._viewer.load(data, lo, hi)
         self._viewer.clear_threshold()
         self._thr_overlay.setup(data, lo, hi)
+        self._bc_overlay.setup(data, lo, hi)
         self._refresh_hist()
 
     def start_loading(self):
@@ -667,12 +977,11 @@ class ViewerPanel(QWidget):
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
-    def _wire_btn(self, btn: QPushButton,
-                  overlay: "_HistogramOverlay | _ThresholdOverlay",
-                  other:   "_HistogramOverlay | _ThresholdOverlay"):
+    def _wire_btn(self, btn: QPushButton, overlay, *others):
         def _enter():
-            other.cancel_hide()
-            other.hide()
+            for o in others:
+                o.cancel_hide()
+                o.hide()
             overlay.cancel_hide()
             if not overlay.isVisible():
                 overlay.show()
@@ -696,12 +1005,16 @@ class ViewerPanel(QWidget):
         else:
             self._viewer.clear_threshold()
 
+    def _on_bc_range_changed(self, lo: float, hi: float):
+        self._viewer.set_display_range(lo, hi)
+        self._refresh_hist()
+
     def _refresh_hist(self):
-        self._hist_overlay.refresh(
-            self._viewer.data,
-            self._viewer.current_slice_2d,
-            *self._viewer.display_range,
-        )
+        stack = self._viewer.data
+        slc   = self._viewer.current_slice_2d
+        lo, hi = self._viewer.display_range
+        self._hist_overlay.refresh(stack, slc, lo, hi)
+        self._bc_overlay.refresh_hist(stack, slc)
 
     def _position_spinner(self):
         self._spinner.setGeometry(0, 30, self.width(), self.height() - 30)
@@ -720,8 +1033,9 @@ class ViewerPanel(QWidget):
         btn_x = self.width() - bw - m
         self._hist_btn.move(btn_x, title_h + m)
         self._thr_btn.move(btn_x,  title_h + m + bh + gap)
+        self._bc_btn.move(btn_x,   title_h + m + 2 * (bh + gap))
 
-        overlay_y = title_h + m + 2 * bh + gap + 2
-        for ov in (self._hist_overlay, self._thr_overlay):
+        overlay_y = title_h + m + 3 * bh + 2 * gap + 2
+        for ov in (self._hist_overlay, self._thr_overlay, self._bc_overlay):
             ox = max(0, self.width() - ov.width() - m)
             ov.move(ox, overlay_y)
