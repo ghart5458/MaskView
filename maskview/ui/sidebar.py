@@ -3,13 +3,15 @@ from pathlib import Path
 from PyQt6.QtCore import QEasingCurve, QPoint, Qt, QTimer, QVariantAnimation, pyqtSignal
 from PyQt6.QtGui import QColor, QCursor
 from PyQt6.QtWidgets import (
-    QButtonGroup, QCheckBox, QColorDialog, QComboBox, QFileDialog, QFrame,
+    QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFrame,
     QHBoxLayout, QLabel, QListWidget, QPushButton,
     QRadioButton, QScrollArea, QSlider, QVBoxLayout, QWidget,
 )
 
 from ..files.resolver import FILE_TYPE_LABELS, FILE_TYPE_ORDER
 from ..par.parser import Individual
+from .annotations import BTN_TO_VALUE, VALUE_TO_BTN
+from .viewer_panel import _ColorSwatchPicker
 
 _TRIGGER_W = 22
 _PANEL_W   = 270
@@ -104,6 +106,7 @@ class Sidebar(QWidget):
     composite_requested     = pyqtSignal(list)   # list of (file_type, (r,g,b), opacity)
     composite_updated       = pyqtSignal(list)   # same format — live-update existing composite
     composite_blend_changed = pyqtSignal(str)    # "screen" or "alpha"
+    annotation_changed      = pyqtSignal(str, str)  # (file_type, value: "Pass"/"Review"/"Fail"/"")
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -450,7 +453,7 @@ class Sidebar(QWidget):
         )
 
         self._overlay_channels = []  # (checkbox, combo, color_btn, opacity_slider)
-        self._overlay_colors   = [(220, 80, 80), (80, 200, 80), (80, 120, 220)]
+        self._overlay_colors   = [(136, 0, 0), (0, 0, 128), (255, 170, 0)]
         _defaults = [
             ("original", 0),
             ("maskseg",  1),
@@ -531,24 +534,23 @@ class Sidebar(QWidget):
 
     def _pick_overlay_color(self, idx: int):
         r, g, b = self._overlay_colors[idx]
-        dlg = QColorDialog(QColor(r, g, b), self)
-        dlg.setWindowTitle("Pick channel color")
-        # Place dialog just to the right of the sidebar so it doesn't trigger close
-        dlg.move(self.mapToGlobal(QPoint(self.width() + 4, 40)))
+        dlg = _ColorSwatchPicker(QColor(r, g, b), self)
+        _, color_btn, _ = self._overlay_channels[idx]
+        sidebar_x = self.mapToGlobal(QPoint(self.width() + 4, 0)).x()
+        btn_y     = color_btn.mapToGlobal(color_btn.rect().center()).y()
+        dlg.move(sidebar_x, btn_y - dlg.height() // 2)
 
         self._pinned = True
         dlg.exec()
         self._pinned = False
 
-        # If the cursor left while the dialog was open, grant one forgiven poll tick
-        # before actually closing (gives the user time to move back to the sidebar).
         if not self.rect().contains(self.mapFromGlobal(QCursor.pos())):
             self._dialog_grace = True
-            self._poll.setInterval(500)  # slow first tick; grace clears it, then normal 80ms
+            self._poll.setInterval(500)
             self._poll.start()
 
-        color = dlg.selectedColor()
-        if not color.isValid():
+        color = dlg.chosen_color()
+        if color is None:
             return
         self._overlay_colors[idx] = (color.red(), color.green(), color.blue())
         r, g, b = self._overlay_colors[idx]
@@ -603,6 +605,17 @@ class Sidebar(QWidget):
         self.composite_blend_changed.emit(self._blend_combo.currentData())
         self._on_composite_controls_changed()
 
+    def _on_annot_btn_clicked(self, ft: str, btn: QPushButton,
+                              checked: bool, group: QButtonGroup) -> None:
+        if checked:
+            for other in group.buttons():
+                if other is not btn:
+                    other.setChecked(False)
+            value = BTN_TO_VALUE[btn.text()]
+        else:
+            value = ""
+        self.annotation_changed.emit(ft, value)
+
     def _build_annotations_section(self, file_types: list[str]):
         body = self._sec_annot.body
         body.setContentsMargins(8, 8, 8, 6)
@@ -632,10 +645,11 @@ class Sidebar(QWidget):
             rrow.addWidget(lbl, stretch=1)
 
             group = QButtonGroup(row_w)
-            group.setExclusive(True)
+            group.setExclusive(False)
             for text, color in (("Pass", "#1d4a27"), ("Rev", "#4a3c12"), ("Fail", "#4a1616")):
                 btn = QPushButton(text)
                 btn.setCheckable(True)
+                btn.setAutoExclusive(False)
                 btn.setFixedHeight(18)
                 btn.setStyleSheet(
                     "QPushButton { background: #252525; color: #888; border: none;"
@@ -644,6 +658,10 @@ class Sidebar(QWidget):
                     "QPushButton:hover:!checked { background: #2e2e2e; color: #aaa; }"
                 )
                 group.addButton(btn)
+                btn.clicked.connect(
+                    lambda checked, b=btn, f=ft, grp=group:
+                        self._on_annot_btn_clicked(f, b, checked, grp)
+                )
                 rrow.addWidget(btn)
 
             self._annot_groups[ft] = group
@@ -796,6 +814,13 @@ class Sidebar(QWidget):
     def update_annotations(self, file_types: list[str]):
         self._build_annotations_section(file_types)
 
+    def set_annotations(self, annots: dict[str, str]) -> None:
+        """Restore annotation button states from a {file_type: value} dict."""
+        for ft, group in self._annot_groups.items():
+            target = VALUE_TO_BTN.get(annots.get(ft, ""), "")
+            for btn in group.buttons():
+                btn.setChecked(btn.text() == target)
+
     def set_par_label(self, path: Path | None):
         if path is None:
             self._par_label.setText("No file loaded")
@@ -832,10 +857,16 @@ class Sidebar(QWidget):
         self.files_applied.emit(selected)
 
     def _browse_par(self):
+        self._pinned = True
         path, _ = QFileDialog.getOpenFileName(
             self, "Select PAR or CSV file", "",
             "PAR / CSV files (*.par *.csv);;All files (*)"
         )
+        self._pinned = False
+        if not self.rect().contains(self.mapFromGlobal(QCursor.pos())):
+            self._dialog_grace = True
+            self._poll.setInterval(500)
+            self._poll.start()
         if path:
             self.par_selected.emit(Path(path))
 

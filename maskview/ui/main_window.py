@@ -9,6 +9,7 @@ from ..files.resolver import (
     FILE_TYPE_LABELS, FILE_TYPE_ORDER, display_max, resolve_file,
 )
 from ..par.parser import Individual, parse_file
+from .annotations import AnnotationManager
 from .composite_panel import COMPOSITE_TYPE, OverlaySpec
 from .multi_viewer import MultiViewer
 from .notifications import NotifManager
@@ -179,6 +180,8 @@ class MainWindow(QMainWindow):
         self._pending_spec: OverlaySpec | None = None
         self._pending_channels: list | None = None
 
+        self._annot_mgr = AnnotationManager()
+
         self._setup_ui()
 
     def _setup_ui(self):
@@ -212,6 +215,8 @@ class MainWindow(QMainWindow):
         self._sidebar.composite_updated.connect(self._on_composite_updated)
         self._sidebar.composite_blend_changed.connect(self._on_blend_changed)
 
+        self._sidebar.annotation_changed.connect(self._on_annotation_changed)
+
         self._viewer.panel_closed.connect(self._on_panel_closed)
         self._viewer.composite_target_selected.connect(self._on_composite_target_selected)
 
@@ -232,6 +237,11 @@ class MainWindow(QMainWindow):
         self._par_path = path
         self._sidebar.set_par_label(path)
         self._individuals = parse_file(path)
+        self._annot_mgr.load(
+            path,
+            [ind.oldname for ind in self._individuals],
+            FILE_TYPE_ORDER,
+        )
         self._sidebar.load_individuals(self._individuals)
         if not self._individuals:
             return
@@ -259,7 +269,7 @@ class MainWindow(QMainWindow):
         if cached:
             self._cancel_loader()
             self._viewer.clear()
-            self._sidebar.update_annotations([])
+            self._refresh_annotations([])
 
             for ft in to_load:
                 if ft in cached:
@@ -279,7 +289,7 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(200, lambda: self._start_preload(idx))
                 self._maybe_restore_overlay()
 
-            self._sidebar.update_annotations(self._panel_fts_for_annotations())
+            self._refresh_annotations(self._panel_fts_for_annotations())
             self._update_composite_channels()
         else:
             self._start_load(ind, to_load)
@@ -307,7 +317,7 @@ class MainWindow(QMainWindow):
         self._cancel_loader()
         self._cancel_preloaders()
         self._viewer.clear()
-        self._sidebar.update_annotations([])
+        self._refresh_annotations([])
         self._update_composite_channels()
         self._launch_loader(ind, file_types)
 
@@ -339,7 +349,7 @@ class MainWindow(QMainWindow):
             path = resolve_file(self._individuals[self._current_idx], ft)
             if path:
                 self._viewer.set_panel_filename(ft, path)
-        self._sidebar.update_annotations(self._panel_fts_for_annotations())
+        self._refresh_annotations(self._panel_fts_for_annotations())
         self._update_composite_channels()
 
     def _on_file_failed(self, ft: str, _msg: str):
@@ -414,12 +424,12 @@ class MainWindow(QMainWindow):
         if to_load:
             self._launch_loader(ind, to_load)
 
-        self._sidebar.update_annotations(self._panel_fts_for_annotations())
+        self._refresh_annotations(self._panel_fts_for_annotations())
 
     def _on_panel_closed(self, ft: str):
         if ft != COMPOSITE_TYPE:
             self._sidebar.set_file_loaded(ft, False)
-        self._sidebar.update_annotations(self._panel_fts_for_annotations())
+        self._refresh_annotations(self._panel_fts_for_annotations())
         self._update_composite_channels()
 
     # ── Warnings ──────────────────────────────────────────────────────────────
@@ -547,6 +557,7 @@ class MainWindow(QMainWindow):
         if panel is not None:
             panel.viewer.set_blend_mode(spec.blend_mode)
         self._store_overlay(spec)
+        self._update_composite_channels()
 
     def _store_overlay(self, spec: OverlaySpec):
         idx = self._current_idx
@@ -588,6 +599,19 @@ class MainWindow(QMainWindow):
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
+    def _refresh_annotations(self, fts: list[str]) -> None:
+        """Rebuild annotation buttons and restore saved state for the current individual."""
+        self._sidebar.update_annotations(fts)
+        if fts and 0 <= self._current_idx < len(self._individuals):
+            ind = self._individuals[self._current_idx]
+            self._sidebar.set_annotations(self._annot_mgr.get_row(ind.oldname))
+
+    def _on_annotation_changed(self, ft: str, value: str) -> None:
+        if self._current_idx < 0:
+            return
+        ind = self._individuals[self._current_idx]
+        self._annot_mgr.set(ind.oldname, ft, value)
+
     def _panel_fts_for_annotations(self) -> list[str]:
         return [p.file_type for p in self._viewer.panels if p.file_type != COMPOSITE_TYPE]
 
@@ -603,12 +627,19 @@ class MainWindow(QMainWindow):
         if comp_panel is None:
             return
 
+        # Fetch cached data first — needed as fallback when a source panel was replaced
+        # by the composite itself (its widget is gone but the numpy array lives in the cache).
+        cached = self._overlay_cache.get(self._current_idx)
+
         channels = []
         for ft, color, opacity in specs:
             src = next((p for p in self._viewer.panels if p.file_type == ft), None)
             if src is not None and src.viewer.data is not None:
                 lo, hi = src.viewer.display_range
                 channels.append((src.viewer.data, lo, hi, color, opacity))
+            elif cached is not None and ft in cached.data:
+                lo, hi = cached.display_ranges.get(ft, (0.0, 1.0))
+                channels.append((cached.data[ft], lo, hi, color, opacity))
 
         if not channels:
             return
@@ -616,7 +647,6 @@ class MainWindow(QMainWindow):
         comp_panel.viewer.update_channels(channels)
 
         # Keep the overlay cache in sync so navigation away/back restores the latest settings
-        cached = self._overlay_cache.get(self._current_idx)
         if cached is not None:
             cached.file_types = [s[0] for s in specs]
             cached.colors     = [s[1] for s in specs]
@@ -626,3 +656,4 @@ class MainWindow(QMainWindow):
                 if src is not None and src.viewer.data is not None:
                     cached.data[ft]           = src.viewer.data
                     cached.display_ranges[ft] = src.viewer.display_range
+                # else: data already in cached.data from creation — preserve it

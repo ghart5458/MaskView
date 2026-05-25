@@ -32,7 +32,7 @@ class VolumeViewer(QWidget):
         self._threshold_active = False
         self._threshold_lo     = 0.0
         self._threshold_hi     = 1.0
-        self._threshold_rgb    = [0, 200, 160]    # turquoise default
+        self._threshold_rgb    = [44, 230, 127]    # theme green (#2ce67f)
         self._setup_ui()
 
     def _setup_ui(self):

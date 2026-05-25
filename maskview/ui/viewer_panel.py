@@ -2,8 +2,9 @@ from PyQt6.QtCore import QEvent, QObject, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import (
     QCheckBox,
-    QColorDialog,
+    QDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -21,7 +22,7 @@ from .viewer import VolumeViewer
 _OVERLAY_BG      = "#1a1a1a"
 _OVERLAY_BORDER  = "#444"
 _HIDE_MS         = 350
-_DEFAULT_THR_RGB = (0, 200, 160)   # turquoise
+_DEFAULT_THR_RGB = (44, 230, 127)  # theme green (#2ce67f)
 
 
 # ── Hover event filter ────────────────────────────────────────────────────────
@@ -195,6 +196,52 @@ class _HistogramOverlay(QFrame):
         super().leaveEvent(event)
 
 
+# ── Color swatch picker ───────────────────────────────────────────────────────
+
+class _ColorSwatchPicker(QDialog):
+    """Frameless grid of preset color swatches — click one to select and close."""
+
+    _SWATCHES = [
+        "#ffffff", "#c0c0c0", "#808080", "#404040", "#000000", "#2ce67f",
+        "#ff0000", "#dc3c3c", "#ff8888", "#cc0000", "#880000", "#440000",
+        "#ff8800", "#ffaa00", "#ffcc44", "#ffdd88", "#cc8800", "#886600",
+        "#00ff00", "#44ff88", "#88ffcc", "#00cc44", "#00aa00", "#004400",
+        "#00ccff", "#3c78dc", "#0000ff", "#0066cc", "#0044aa", "#000080",
+        "#ff00ff", "#ff44aa", "#cc44cc", "#aa00aa", "#660066", "#440044",
+    ]
+    _COLS = 6
+
+    def __init__(self, initial: QColor, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.WindowType.Popup)
+        self.setStyleSheet("QDialog { background: #1e1e1e; border: 1px solid #3a3a3a; }")
+        self._chosen: QColor | None = None
+        grid = QGridLayout(self)
+        grid.setContentsMargins(6, 6, 6, 6)
+        grid.setSpacing(3)
+        for i, hex_color in enumerate(self._SWATCHES):
+            row, col = divmod(i, self._COLS)
+            btn = QPushButton()
+            btn.setFixedSize(22, 22)
+            btn.setStyleSheet(
+                f"QPushButton {{ background: {hex_color};"
+                " border: 1px solid #555; border-radius: 2px; }"
+                "QPushButton:hover { border: 2px solid #fff; }"
+            )
+            c = QColor(hex_color)
+            btn.clicked.connect(lambda _, color=c: self._select(color))
+            grid.addWidget(btn, row, col)
+        self.adjustSize()
+
+    def chosen_color(self) -> QColor | None:
+        """Returns the selected color, or None if the picker was dismissed."""
+        return self._chosen
+
+    def _select(self, color: QColor):
+        self._chosen = color
+        self.accept()
+
+
 # ── Threshold overlay ─────────────────────────────────────────────────────────
 
 class _ThresholdOverlay(QFrame):
@@ -344,9 +391,12 @@ class _ThresholdOverlay(QFrame):
 
     def _pick_color(self):
         r, g, b = self._color_rgb
-        chosen  = QColorDialog.getColor(QColor(r, g, b), self, "Highlight color")
-        if chosen.isValid():
-            self._color_rgb = [chosen.red(), chosen.green(), chosen.blue()]
+        dlg = _ColorSwatchPicker(QColor(r, g, b), self)
+        dlg.move(self._color_btn.mapToGlobal(self._color_btn.rect().bottomLeft()))
+        dlg.exec()
+        color = dlg.chosen_color()
+        if color is not None:
+            self._color_rgb = [color.red(), color.green(), color.blue()]
             self._refresh_color_btn()
             self.color_changed.emit(*self._color_rgb)
 
