@@ -1,7 +1,7 @@
 import numpy as np
 from PyQt6.QtCore import QEvent, QPoint, QRect, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QCursor, QPainter
-from PyQt6.QtWidgets import QApplication, QSplitter, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QApplication, QLabel, QSplitter, QVBoxLayout, QWidget
 
 from .composite_panel import COMPOSITE_TYPE, CompositePanel
 from .viewer_panel import ViewerPanel
@@ -78,6 +78,14 @@ class MultiViewer(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
+        # Welcome overlay — floats above the splitter, visible when no panels are loaded
+        self._welcome = QLabel("Select a PAR / CSV or individual scan to begin.", self)
+        self._welcome.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._welcome.setStyleSheet(
+            "color: #3a3a3a; font-size: 14px; background: #111111;"
+        )
+        self._welcome.setWordWrap(True)
+
         self._outer = QSplitter(Qt.Orientation.Vertical)
         self._outer.setHandleWidth(3)
         self._outer.setStyleSheet(_HANDLE_STYLE)
@@ -94,6 +102,9 @@ class MultiViewer(QWidget):
         self._outer.addWidget(self._top)
         self._outer.addWidget(self._bottom)
         layout.addWidget(self._outer, stretch=1)
+
+        self._welcome.raise_()
+        self._welcome.show()
 
     # ── Panel management ──────────────────────────────────────────────────────
 
@@ -202,6 +213,7 @@ class MultiViewer(QWidget):
         super().resizeEvent(event)
         if self._selection_overlay is not None:
             self._selection_overlay.setGeometry(self.rect())
+        self._welcome.setGeometry(self.rect())
 
     # ── External control setters (called by MainWindow from sidebar signals) ──
 
@@ -243,6 +255,13 @@ class MultiViewer(QWidget):
     # ── Layout ────────────────────────────────────────────────────────────────
 
     def _rebuild_layout(self):
+        if self._panels:
+            self._welcome.hide()
+        else:
+            self._welcome.setGeometry(self.rect())
+            self._welcome.show()
+            self._welcome.raise_()
+
         if self._bottom_dummy is not None:
             self._bottom_dummy.setParent(None)
             self._bottom_dummy = None

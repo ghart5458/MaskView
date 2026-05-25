@@ -97,6 +97,7 @@ class Sidebar(QWidget):
     """Hover-activated overlay sidebar with four collapsible sections."""
 
     par_selected        = pyqtSignal(object)    # Path
+    scan_selected       = pyqtSignal(object)    # Path
     files_applied       = pyqtSignal(list)      # list[str] of checked file types
     orientation_changed = pyqtSignal(str)
     layout_changed      = pyqtSignal(str)
@@ -218,13 +219,15 @@ class Sidebar(QWidget):
         ca_layout.addStretch()
         col.addWidget(ca_row)
 
-        self._sec_file  = _Section("File",        expanded=True)
-        self._sec_tools = _Section("Tools",       expanded=False)
-        self._sec_annot = _Section("Annotations", expanded=False)
-        self._sec_indiv = _Section("Individuals", expanded=True)
+        self._sec_file    = _Section("File",          expanded=True)
+        self._sec_overlay = _Section("Color Overlay", expanded=False)
+        self._sec_tags    = _Section("Tagging",       expanded=False)
+        self._sec_annot   = _Section("Annotations",   expanded=False)
+        self._sec_indiv   = _Section("Individuals",   expanded=True)
 
         col.addWidget(self._sec_file)
-        col.addWidget(self._sec_tools)
+        col.addWidget(self._sec_overlay)
+        col.addWidget(self._sec_tags)
         col.addWidget(self._sec_annot)
         col.addWidget(self._sec_indiv)
         col.addStretch()
@@ -262,7 +265,8 @@ class Sidebar(QWidget):
         self._refresh_nav(-1)
 
         self._build_file_section()
-        self._build_tools_section()
+        self._build_overlay_section()
+        self._build_tags_section()
         self._build_annotations_section([])
         self._build_individuals_section()
 
@@ -271,14 +275,20 @@ class Sidebar(QWidget):
         body.setContentsMargins(8, 8, 8, 6)
         body.setSpacing(4)
 
-        self._par_btn = QPushButton("Select PAR / CSV…")
-        self._par_btn.setStyleSheet(
+        _open_btn_style = (
             "QPushButton { background: #0f2a1a; color: #5fd49a; border: none;"
             " border-radius: 3px; padding: 5px 8px; font-size: 12px; }"
             "QPushButton:hover { background: #147a3f; color: #fff; }"
         )
+        self._par_btn = QPushButton("Select PAR / CSV…")
+        self._par_btn.setStyleSheet(_open_btn_style)
         self._par_btn.clicked.connect(self._browse_par)
         body.addWidget(self._par_btn)
+
+        self._scan_btn = QPushButton("Select individual scan…")
+        self._scan_btn.setStyleSheet(_open_btn_style)
+        self._scan_btn.clicked.connect(self._browse_scan)
+        body.addWidget(self._scan_btn)
 
         self._par_label = QLabel("No file loaded")
         self._par_label.setStyleSheet(
@@ -424,21 +434,36 @@ class Sidebar(QWidget):
         drow.addWidget(self._downsample_combo)
         db.addWidget(ds_row)
 
+        db.addWidget(_sep())
+        sync_row = QWidget()
+        sync_row.setStyleSheet("background: transparent;")
+        srow = QHBoxLayout(sync_row)
+        srow.setContentsMargins(0, 2, 0, 0)
+        srow.setSpacing(6)
+        srow.addWidget(_mini_label("SYNCHRONIZE VIEWS"))
+        srow.addStretch()
+        self._sync_btn = QPushButton("ON")
+        self._sync_btn.setCheckable(True)
+        self._sync_btn.setChecked(True)
+        self._sync_btn.setFixedSize(42, 22)
+        self._sync_btn.setStyleSheet(
+            "QPushButton { background: #252525; color: #666; border: 1px solid #333;"
+            " border-radius: 3px; font-size: 11px; font-weight: bold; }"
+            "QPushButton:hover { color: #999; background: #2e2e2e; }"
+            "QPushButton:checked { background: #0f2a1a; color: #2ce67f;"
+            " border-color: #147a3f; }"
+            "QPushButton:checked:hover { background: #147a3f; color: #fff; }"
+        )
+        self._sync_btn.toggled.connect(self._on_sync_toggled)
+        srow.addWidget(self._sync_btn)
+        db.addWidget(sync_row)
+
         body.addWidget(self._sec_display)
 
-    def _build_tools_section(self):
-        body = self._sec_tools.body
+    def _build_overlay_section(self):
+        body = self._sec_overlay.body
         body.setContentsMargins(8, 8, 8, 6)
         body.setSpacing(5)
-
-        self._sync_cb = QCheckBox("Synchronize windows")
-        self._sync_cb.setChecked(True)
-        self._sync_cb.setStyleSheet("QCheckBox { color: #bbb; font-size: 12px; }")
-        self._sync_cb.toggled.connect(self.sync_toggled)
-        body.addWidget(self._sync_cb)
-
-        body.addWidget(_sep())
-        body.addWidget(_mini_label("COLOR OVERLAY"))
 
         _combo_style = (
             "QComboBox { background: #252525; color: #ccc; border: 1px solid #3a3a3a;"
@@ -454,14 +479,9 @@ class Sidebar(QWidget):
             "QSlider::sub-page:horizontal { background: #3a3a3a; border-radius: 1px; }"
         )
 
-        self._overlay_channels = []  # (checkbox, combo, color_btn, opacity_slider)
+        self._overlay_channels = []
         self._overlay_colors   = [(136, 0, 0), (0, 0, 128), (255, 170, 0)]
-        _defaults = [
-            ("original", 0),
-            ("maskseg",  1),
-            ("seg",      2),
-        ]
-        for ch_idx, (ft_default, color_idx) in enumerate(_defaults):
+        for ch_idx, color_idx in enumerate([0, 1, 2]):
             row_w = QWidget()
             row_w.setStyleSheet("background: transparent;")
             rrow = QHBoxLayout(row_w)
@@ -529,8 +549,11 @@ class Sidebar(QWidget):
         self._create_composite_btn.clicked.connect(self._on_create_composite)
         body.addWidget(self._create_composite_btn)
 
-        body.addWidget(_sep())
-        body.addWidget(_mini_label("TAGGING"))
+    def _build_tags_section(self):
+        body = self._sec_tags.body
+        body.setContentsMargins(8, 8, 8, 6)
+        body.setSpacing(4)
+
         self._show_tags_cb = QCheckBox("Show tags")
         self._show_tags_cb.setChecked(True)
         self._show_tags_cb.setStyleSheet("QCheckBox { color: #bbb; font-size: 12px; }")
@@ -929,9 +952,13 @@ class Sidebar(QWidget):
         n = sum(1 for cb in self._file_checks.values() if cb.isChecked())
         self._file_count_lbl.setText(f"{n} selected")
 
+    def _on_sync_toggled(self, checked: bool):
+        self._sync_btn.setText("ON" if checked else "OFF")
+        self.sync_toggled.emit(checked)
+
     def _set_all_sections(self, expanded: bool):
-        for sec in (self._sec_file, self._sec_display, self._sec_tools,
-                    self._sec_annot, self._sec_indiv):
+        for sec in (self._sec_file, self._sec_display,
+                    self._sec_overlay, self._sec_tags, self._sec_annot, self._sec_indiv):
             if sec._expanded != expanded:
                 sec._toggle()
 
@@ -952,6 +979,23 @@ class Sidebar(QWidget):
             self._poll.start()
         if path:
             self.par_selected.emit(Path(path))
+
+    def _browse_scan(self):
+        self._pinned = True
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select individual scan", "",
+            "MHD files (*.mhd);;All files (*)"
+        )
+        self._pinned = False
+        if not self.rect().contains(self.mapFromGlobal(QCursor.pos())):
+            self._dialog_grace = True
+            self._poll.setInterval(500)
+            self._poll.start()
+        if path:
+            self.scan_selected.emit(Path(path))
+
+    def checked_file_types(self) -> list[str]:
+        return [ft for ft, cb in self._file_checks.items() if cb.isChecked()]
 
     def _on_row_changed(self, row: int):
         if row < 0:

@@ -69,3 +69,76 @@ def display_max(file_type: str) -> int | None:
     """Declared display maximum for scaling. None means auto (percentile B&C)."""
     spec = _FILE_SPECS.get(file_type)
     return spec[2] if spec else None
+
+
+_SUBFOLDER_TO_TYPE: dict[str, str] = {
+    '00_Original': 'original',
+    '02_Close':    'close',
+    '03_OuterMask':'outer',
+    '04_InnerMask':'inner',
+    '05_ThickMask':'thick',
+    '06_Trab':     'trab',
+}
+
+
+def infer_file_type_from_path(path: Path) -> str | None:
+    """Infer the file_type of an MHD from its subfolder name and filename suffix."""
+    subfolder = path.parent.name
+    if subfolder in _SUBFOLDER_TO_TYPE:
+        return _SUBFOLDER_TO_TYPE[subfolder]
+    if subfolder == '01_Seg':
+        return 'rdn_seg' if '_RDN_' in path.stem else 'seg'
+    if subfolder == '07_MaskSeg':
+        if path.stem.endswith('_MaskSegIn'):
+            return 'masksegin'
+        if path.stem.endswith('_MaskSegOut'):
+            return 'masksegout'
+        if path.stem.endswith('_MaskSeg'):
+            return 'maskseg'
+    return None
+
+
+_SCAN_SUBFOLDER: dict[str, str] = {
+    'original':   '00_Original',
+    'seg':        '01_Seg',
+    'rdn_seg':    '01_Seg',
+    'close':      '02_Close',
+    'outer':      '03_OuterMask',
+    'inner':      '04_InnerMask',
+    'thick':      '05_ThickMask',
+    'trab':       '06_Trab',
+    'masksegin':  '07_MaskSeg',
+    'masksegout': '07_MaskSeg',
+    'maskseg':    '07_MaskSeg',
+}
+
+
+def resolve_file_from_scan(base_path: Path, file_type: str) -> Path | None:
+    """Find a file by globbing the expected subfolder — no Individual name fields needed.
+
+    Used when loading a single scan selected by the user rather than via a PAR.
+    base_path is the individual's root folder (parent of the XX_SubFolder directories).
+    """
+    subfolder = _SCAN_SUBFOLDER.get(file_type)
+    if subfolder is None:
+        return None
+    folder = base_path / subfolder
+    if not folder.exists():
+        return None
+
+    candidates = sorted(folder.glob('*.mhd'))
+
+    if file_type == 'seg':
+        candidates = [p for p in candidates if '_RDN_' not in p.stem]
+    elif file_type == 'rdn_seg':
+        candidates = [p for p in candidates if '_RDN_' in p.stem]
+    elif file_type == 'masksegin':
+        candidates = [p for p in candidates if p.stem.endswith('_MaskSegIn')]
+    elif file_type == 'masksegout':
+        candidates = [p for p in candidates if p.stem.endswith('_MaskSegOut')]
+    elif file_type == 'maskseg':
+        candidates = [p for p in candidates
+                      if p.stem.endswith('_MaskSeg')
+                      and not p.stem.endswith(('_MaskSegIn', '_MaskSegOut'))]
+
+    return candidates[0] if candidates else None

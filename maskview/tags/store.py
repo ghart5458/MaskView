@@ -18,7 +18,7 @@ class TagStore:
     """Loads and saves tags for a single volume file to a JSON sidecar."""
 
     def __init__(self, volume_path: Path):
-        self._json_path = volume_path.with_name(volume_path.stem + "_tags.json")
+        self._json_path = volume_path.with_name(volume_path.stem + "_MV_tags.json")
         self._tags: list[Tag] = []
         self._load()
 

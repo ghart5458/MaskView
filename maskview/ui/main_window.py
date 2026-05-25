@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import QHBoxLayout, QMainWindow, QVBoxLayout, QWidget
 from ..files.loader import compute_display_range, load_volume
 from ..files.resolver import (
     FILE_TYPE_LABELS, FILE_TYPE_ORDER, display_max, resolve_file,
+    resolve_file_from_scan, infer_file_type_from_path,
 )
 from ..par.parser import Individual, parse_file
 from .annotations import AnnotationManager
@@ -158,6 +159,39 @@ class _CompositeLoaderThread(QThread):
         self.all_done.emit()
 
 
+# ── Direct (pre-resolved) loader ──────────────────────────────────────────────
+
+class _DirectLoaderThread(QThread):
+    """Like _LoaderThread but takes a pre-resolved {file_type: Path} dict."""
+    file_starting = pyqtSignal(str)
+    file_loaded   = pyqtSignal(str, object, float, float)
+    file_failed   = pyqtSignal(str, str)
+    all_done      = pyqtSignal()
+
+    def __init__(self, file_paths: dict, turbo_step: int = 1, parent=None):
+        super().__init__(parent)
+        self._file_paths = file_paths
+        self._turbo_step = turbo_step
+        self._stop       = False
+
+    def stop(self):
+        self._stop = True
+
+    def run(self):
+        for ft, path in self._file_paths.items():
+            if self._stop:
+                break
+            self.file_starting.emit(ft)
+            try:
+                data, _ = load_volume(path, use_memmap=False, turbo_step=self._turbo_step)
+                dmax = display_max(ft)
+                lo, hi = (0.0, float(dmax)) if dmax is not None else compute_display_range(data)
+                self.file_loaded.emit(ft, data, lo, hi)
+            except Exception as exc:
+                self.file_failed.emit(ft, str(exc))
+        self.all_done.emit()
+
+
 # ── Main window ───────────────────────────────────────────────────────────────
 
 class MainWindow(QMainWindow):
@@ -170,6 +204,10 @@ class MainWindow(QMainWindow):
         self._loading = False
         self._loader: _LoaderThread | None = None
         self._turbo_step = 1
+
+        self._single_scan_mode    = False
+        self._scan_base_path: Path | None = None
+        self._scan_resolved_paths: dict   = {}
 
         self._preload_cache: dict[int, dict[str, tuple]] = {}
         self._preloaders: list[_PreloaderThread] = []
@@ -205,6 +243,7 @@ class MainWindow(QMainWindow):
         self._sidebar.open_now()
 
         self._sidebar.par_selected.connect(self._on_par_selected)
+        self._sidebar.scan_selected.connect(self._on_scan_selected)
         self._sidebar.files_applied.connect(self._on_files_applied)
         self._sidebar.orientation_changed.connect(self._viewer.set_orientation)
         self._sidebar.layout_changed.connect(self._viewer.set_layout_mode)
@@ -237,6 +276,7 @@ class MainWindow(QMainWindow):
     def _on_par_selected(self, path: Path):
         self._cancel_preloaders()
         self._preload_cache.clear()
+        self._single_scan_mode = False
         self._par_path = path
         self._sidebar.set_par_label(path)
         self._individuals = parse_file(path)
@@ -254,6 +294,95 @@ class MainWindow(QMainWindow):
         default_checked = {ft for ft in self._session_types if available.get(ft)}
         self._sidebar.update_file_availability(available, default_checked)
         self._sidebar.select_individual_silent(0)
+
+    def _on_scan_selected(self, path: Path):
+        self._cancel_preloaders()
+        self._preload_cache.clear()
+        self._single_scan_mode = True
+        self._par_path = None
+
+        # Derive base_path: if the MHD is inside a numbered subfolder (e.g. 00_Original),
+        # go up two levels; otherwise use the immediate parent.
+        parent_name = path.parent.name
+        if parent_name and parent_name[0].isdigit():
+            base_path = path.parent.parent
+        else:
+            base_path = path.parent
+        self._scan_base_path = base_path
+
+        # Always include the file the user actually selected, regardless of checkbox state
+        selected_ft = infer_file_type_from_path(path)
+
+        # Resolve companion files for every currently-checked file type
+        checked = self._sidebar.checked_file_types()
+        want = list(checked)
+        if selected_ft and selected_ft not in want:
+            want.append(selected_ft)
+
+        resolved: dict = {}
+        for ft in want:
+            if ft == selected_ft:
+                resolved[ft] = path          # use the file the user picked directly
+            else:
+                p = resolve_file_from_scan(base_path, ft)
+                if p is not None:
+                    resolved[ft] = p
+        self._scan_resolved_paths = dict(resolved)
+
+        missing = [ft for ft in want if ft not in resolved]
+        if missing:
+            labels = ", ".join(FILE_TYPE_LABELS.get(ft, ft) for ft in missing)
+            self._notifs.show(
+                "Files not found",
+                f"Could not locate: {labels}",
+                "warning",
+            )
+
+        if not resolved:
+            return
+
+        oldname = base_path.name
+        ind = Individual(
+            oldname=oldname, name=oldname,
+            res=0.0, dim1=0, dim2=0, dim3=0,
+            kc='0', kpoint='0', kout='0', kin='0',
+            path=str(base_path.parent),
+            species='', population='', specimen='', bone='', portion='',
+            raw_fields={},
+        )
+        self._individuals    = [ind]
+        self._current_idx    = 0
+
+        self._annot_mgr.load(
+            base_path / (oldname + "_annotations.csv"),
+            [oldname],
+            FILE_TYPE_ORDER,
+        )
+
+        self._sidebar.set_par_label(None)
+        available = {ft: (ft in resolved) for ft in FILE_TYPE_ORDER}
+        self._sidebar.update_file_availability(available, set(resolved.keys()))
+        self._sidebar.load_individuals([ind])
+        self._sidebar.select_individual_silent(0)
+        self._sidebar.update_tag_list([], "")
+
+        self._start_load_direct(resolved)
+
+    def _start_load_direct(self, file_paths: dict):
+        self._cancel_loader()
+        self._viewer.clear()
+        self._refresh_annotations([])
+        self._update_composite_channels()
+        self._sidebar.update_tag_list([], "")
+        for ft in file_paths:
+            self._viewer.add_empty_panel(ft)
+        self._loading = True
+        self._sidebar.set_controls_enabled(False)
+        self._loader = _DirectLoaderThread(file_paths, self._turbo_step)
+        self._loader.file_loaded.connect(self._on_file_loaded)
+        self._loader.file_failed.connect(self._on_file_failed)
+        self._loader.all_done.connect(self._on_load_done)
+        self._loader.start()
 
     # ── Navigation ────────────────────────────────────────────────────────────
 
@@ -349,10 +478,14 @@ class MainWindow(QMainWindow):
     def _on_file_loaded(self, ft: str, data: object, lo: float, hi: float):
         self._viewer.fill_panel(ft, data, lo, hi)
         self._sidebar.set_file_loaded(ft, True)
-        if 0 <= self._current_idx < len(self._individuals):
+        if self._single_scan_mode:
+            path = self._scan_resolved_paths.get(ft)
+        elif 0 <= self._current_idx < len(self._individuals):
             path = resolve_file(self._individuals[self._current_idx], ft)
-            if path:
-                self._viewer.set_panel_filename(ft, path)
+        else:
+            path = None
+        if path:
+            self._viewer.set_panel_filename(ft, path)
         self._refresh_annotations(self._panel_fts_for_annotations())
         self._update_composite_channels()
 
@@ -364,7 +497,8 @@ class MainWindow(QMainWindow):
         self._sidebar.set_controls_enabled(True)
         self._loader = None
         QTimer.singleShot(0, self._viewer.sync_all)
-        QTimer.singleShot(200, lambda: self._start_preload(self._current_idx))
+        if not self._single_scan_mode:
+            QTimer.singleShot(200, lambda: self._start_preload(self._current_idx))
         self._check_dimension_mismatch()
         self._maybe_restore_overlay()
 
@@ -416,7 +550,6 @@ class MainWindow(QMainWindow):
         self._session_types = list(file_types)
         self._cancel_preloaders()
         self._preload_cache.clear()
-        ind = self._individuals[self._current_idx]
         self._cancel_loader()
 
         for panel in list(self._viewer.panels):
@@ -425,8 +558,25 @@ class MainWindow(QMainWindow):
 
         already_open = {p.file_type for p in self._viewer.panels}
         to_load = [ft for ft in file_types if ft not in already_open]
+
         if to_load:
-            self._launch_loader(ind, to_load)
+            if self._single_scan_mode:
+                resolved = {}
+                for ft in to_load:
+                    p = resolve_file_from_scan(self._scan_base_path, ft)
+                    if p is not None:
+                        resolved[ft] = p
+                        self._scan_resolved_paths[ft] = p
+                missing = [ft for ft in to_load if ft not in resolved]
+                if missing:
+                    labels = ", ".join(FILE_TYPE_LABELS.get(ft, ft) for ft in missing)
+                    self._notifs.show("Files not found",
+                                      f"Could not locate: {labels}", "warning")
+                if resolved:
+                    self._start_load_direct(resolved)
+            else:
+                ind = self._individuals[self._current_idx]
+                self._launch_loader(ind, to_load)
 
         self._refresh_annotations(self._panel_fts_for_annotations())
 
