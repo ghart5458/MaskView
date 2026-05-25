@@ -529,7 +529,16 @@ class ViewerPanel(QWidget):
         self._label.setStyleSheet(
             "color: #dddddd; font-weight: bold; font-size: 12px; background: transparent;"
         )
-        bar.addWidget(self._label, stretch=1)
+        bar.addWidget(self._label)
+
+        self._filename_lbl = QLabel("")
+        self._filename_lbl.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        self._filename_lbl.setStyleSheet(
+            "color: #999; font-size: 12px; font-style: italic; background: transparent;"
+        )
+        bar.addWidget(self._filename_lbl, stretch=1)
 
         close_btn = QPushButton("✕")
         close_btn.setFixedSize(20, 20)
@@ -577,6 +586,12 @@ class ViewerPanel(QWidget):
         )
 
     # ── Public API ────────────────────────────────────────────────────────────
+
+    def set_filename(self, path) -> None:
+        """Display the file's stem in the title bar (right-aligned, italic)."""
+        stem = path.stem if path else ""
+        self._filename_lbl.setText(stem)
+        self._filename_lbl.setToolTip(str(path) if path else "")
 
     def load(self, data: np.ndarray, lo: float, hi: float):
         self._viewer.load(data, lo, hi)

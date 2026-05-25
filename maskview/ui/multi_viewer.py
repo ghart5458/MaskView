@@ -1,10 +1,52 @@
 import numpy as np
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QPoint, QRect, QTimer, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import QSplitter, QVBoxLayout, QWidget
 
+from .composite_panel import COMPOSITE_TYPE, CompositePanel
 from .viewer_panel import ViewerPanel
 
 _HANDLE_STYLE = "QSplitter::handle { background: #333; }"
+
+
+class _SelectionOverlay(QWidget):
+    """Semi-transparent click-to-select overlay shown during composite placement."""
+
+    panel_clicked = pyqtSignal(str)  # file_type of clicked panel
+
+    def __init__(self, panels: list, parent: QWidget):
+        super().__init__(parent)
+        self._panels = panels
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setGeometry(parent.rect())
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.raise_()
+        self.show()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 140))
+        painter.setPen(QColor(255, 255, 255, 220))
+        font = painter.font()
+        font.setPointSize(13)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(
+            self.rect(),
+            Qt.AlignmentFlag.AlignCenter,
+            "Click a panel to place the color composite",
+        )
+        painter.end()
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        pos = event.pos()
+        for panel in self._panels:
+            top_left = panel.mapTo(self.parent(), QPoint(0, 0))
+            if QRect(top_left, panel.size()).contains(pos):
+                self.panel_clicked.emit(panel.file_type)
+                return
 
 
 class MultiViewer(QWidget):
@@ -14,15 +56,17 @@ class MultiViewer(QWidget):
     via set_orientation / set_layout_mode / set_sync.
     """
 
-    panel_closed = pyqtSignal(str)  # file_type of the closed panel
+    panel_closed              = pyqtSignal(str)  # file_type of the closed panel
+    composite_target_selected = pyqtSignal(str)  # file_type of the panel to replace
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._panels: list[ViewerPanel] = []
+        self._panels: list = []
         self._sync_enabled = True
         self._orientation  = "XY"
         self._layout_mode  = "2×2"
         self._bottom_dummy: QWidget | None = None
+        self._selection_overlay: _SelectionOverlay | None = None
         self._setup_ui()
 
     def _setup_ui(self):
@@ -73,13 +117,54 @@ class MultiViewer(QWidget):
     def add_panel(self, file_type: str, data: np.ndarray,
                   lo: float, hi: float) -> ViewerPanel:
         panel = self.add_empty_panel(file_type)
-        panel.stop_loading()   # data is ready — no spinner needed
+        panel.stop_loading()
         panel.load(data, lo, hi)
         return panel
 
+    def add_composite_panel(self, channels: list) -> CompositePanel:
+        """Append a composite panel (data is ready — no loading spinner)."""
+        panel = CompositePanel()
+        self._connect_panel(panel)
+        panel.closed.connect(lambda p=panel: self._remove_panel(p))
+        self._panels.append(panel)
+        self._rebuild_layout()
+        panel.viewer.set_channels(channels)
+        panel.viewer.set_orientation(self._orientation)
+        QTimer.singleShot(0, self.sync_all)
+        return panel
+
+    def replace_with_composite(self, file_type: str, channels: list) -> CompositePanel | None:
+        """Replace the named panel with a composite panel.
+
+        Does NOT emit panel_closed so the sidebar keeps the file checked.
+        Returns None if no panel with that file_type is found.
+        """
+        target = next((p for p in self._panels if p.file_type == file_type), None)
+        if target is None:
+            return None
+        idx = self._panels.index(target)
+        self._panels.remove(target)
+        target.setParent(None)
+
+        panel = CompositePanel()
+        self._connect_panel(panel)
+        panel.closed.connect(lambda p=panel: self._remove_panel(p))
+        self._panels.insert(idx, panel)
+        self._rebuild_layout()
+        panel.viewer.set_channels(channels)
+        panel.viewer.set_orientation(self._orientation)
+        QTimer.singleShot(0, self.sync_all)
+        return panel
+
     @property
-    def panels(self) -> list[ViewerPanel]:
+    def panels(self) -> list:
         return list(self._panels)
+
+    def set_panel_filename(self, file_type: str, path) -> None:
+        for panel in self._panels:
+            if panel.file_type == file_type and hasattr(panel, "set_filename"):
+                panel.set_filename(path)
+                return
 
     def close_panel(self, file_type: str) -> None:
         for panel in list(self._panels):
@@ -90,6 +175,29 @@ class MultiViewer(QWidget):
     def clear(self) -> None:
         for panel in list(self._panels):
             self._remove_panel(panel)
+
+    # ── Selection mode ────────────────────────────────────────────────────────
+
+    def enter_selection_mode(self):
+        """Dim the viewer and wait for the user to click a panel to replace."""
+        if self._selection_overlay is not None:
+            return
+        self._selection_overlay = _SelectionOverlay(self._panels, self)
+        self._selection_overlay.panel_clicked.connect(self._on_panel_clicked_for_composite)
+
+    def exit_selection_mode(self):
+        if self._selection_overlay is not None:
+            self._selection_overlay.setParent(None)
+            self._selection_overlay = None
+
+    def _on_panel_clicked_for_composite(self, file_type: str):
+        self.exit_selection_mode()
+        self.composite_target_selected.emit(file_type)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._selection_overlay is not None:
+            self._selection_overlay.setGeometry(self.rect())
 
     # ── External control setters (called by MainWindow from sidebar signals) ──
 
@@ -154,7 +262,7 @@ class MultiViewer(QWidget):
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
-    def _remove_panel(self, panel: ViewerPanel):
+    def _remove_panel(self, panel):
         ft = panel.file_type
         if panel in self._panels:
             self._panels.remove(panel)
@@ -162,7 +270,7 @@ class MultiViewer(QWidget):
         self.panel_closed.emit(ft)
         self._rebuild_layout()
 
-    def _connect_panel(self, panel: ViewerPanel):
+    def _connect_panel(self, panel):
         v = panel.viewer
         v.slice_changed.connect(self._on_slice_changed)
         v.zoom_changed.connect(self._on_zoom_changed)
