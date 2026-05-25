@@ -8,3 +8,8 @@ dependencies = [
     "numpy>=2.0",
     "PyQt6>=6.6",
 ]
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.20.0",
+]
