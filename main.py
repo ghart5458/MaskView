@@ -22,7 +22,8 @@ _DARK_INDICATOR_CSS = """
     }
     QCheckBox::indicator:hover   { border-color: #2ce67f; }
     QCheckBox::indicator:checked { background: #2ce67f; border-color: #1ab864; }
-    QCheckBox::indicator:disabled { border-color: #2e2e2e; background: #181818; }
+    QCheckBox::indicator:disabled         { border-color: #2e2e2e; background: #181818; }
+    QCheckBox::indicator:disabled:checked { border-color: #1a5e32; background: #14472a; }
     QRadioButton::indicator {
         width: 13px; height: 13px;
         border: 1.5px solid #555; border-radius: 7px; background: #252525;
