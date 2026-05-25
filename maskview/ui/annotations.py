@@ -27,7 +27,6 @@ class AnnotationManager:
             self._read(oldnames)
         else:
             self._data = {name: {} for name in oldnames}
-            self._write()
 
     def set(self, oldname: str, file_type: str, value: str) -> None:
         """Record an annotation and persist to disk. Pass '' to clear."""

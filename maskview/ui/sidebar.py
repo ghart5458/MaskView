@@ -3,11 +3,12 @@ from pathlib import Path
 from PyQt6.QtCore import QEasingCurve, QPoint, Qt, QTimer, QVariantAnimation, pyqtSignal
 from PyQt6.QtGui import QColor, QCursor
 from PyQt6.QtWidgets import (
-    QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFrame,
-    QHBoxLayout, QLabel, QListWidget, QPushButton,
+    QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
+    QGridLayout, QHBoxLayout, QLabel, QListWidget, QPushButton,
     QRadioButton, QScrollArea, QSlider, QVBoxLayout, QWidget,
 )
 
+from .. import settings as _settings
 from ..files.resolver import FILE_TYPE_LABELS, FILE_TYPE_ORDER
 from ..par.parser import Individual
 from .annotations import BTN_TO_VALUE, VALUE_TO_BTN
@@ -16,6 +17,17 @@ from .viewer_panel import _ColorSwatchPicker
 _TRIGGER_W = 22
 _PANEL_W   = 270
 _OPEN_W    = _TRIGGER_W + _PANEL_W
+
+_TURBO_OFF_STYLE = (
+    "QPushButton { background: #252525; color: #666; border: 1px solid #333;"
+    " border-radius: 3px; font-size: 11px; font-weight: bold; }"
+    "QPushButton:hover { color: #999; background: #2e2e2e; }"
+)
+_TURBO_ON_STYLE = (
+    "QPushButton { background: #0f2a1a; color: #2ce67f; border: 1px solid #147a3f;"
+    " border-radius: 3px; font-size: 11px; font-weight: bold; }"
+    "QPushButton:hover { background: #147a3f; color: #fff; }"
+)
 
 
 def _sep() -> QFrame:
@@ -93,11 +105,96 @@ class _Section(QWidget):
         return self._body_layout
 
 
+class _ManualFileSelectDialog(QDialog):
+    """One Browse row per file type — lets the user pick each MHD independently."""
+
+    def __init__(self, file_types: list, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select files manually")
+        self.setMinimumWidth(500)
+        self._paths: dict = {}
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+
+        intro = QLabel("Browse to each file individually.")
+        intro.setStyleSheet("color: #aaa; font-size: 12px; padding-bottom: 2px;")
+        layout.addWidget(intro)
+
+        grid = QWidget()
+        gl = QGridLayout(grid)
+        gl.setContentsMargins(0, 0, 0, 0)
+        gl.setSpacing(6)
+        gl.setColumnStretch(1, 1)
+
+        self._path_labels: dict = {}
+        for i, ft in enumerate(file_types):
+            type_lbl = QLabel(FILE_TYPE_LABELS.get(ft, ft))
+            type_lbl.setStyleSheet("color: #ccc; font-size: 12px;")
+            type_lbl.setFixedWidth(90)
+
+            path_lbl = QLabel("—")
+            path_lbl.setStyleSheet("color: #555; font-size: 11px; font-style: italic;")
+            self._path_labels[ft] = path_lbl
+
+            browse_btn = QPushButton("Browse…")
+            browse_btn.setFixedWidth(72)
+            browse_btn.setStyleSheet(
+                "QPushButton { background: #252525; color: #999; border: 1px solid #3a3a3a;"
+                " border-radius: 3px; font-size: 11px; padding: 2px 6px; }"
+                "QPushButton:hover { background: #2e2e2e; color: #ddd; }"
+            )
+            browse_btn.clicked.connect(lambda _, f=ft: self._browse_one(f))
+
+            gl.addWidget(type_lbl, i, 0)
+            gl.addWidget(path_lbl, i, 1)
+            gl.addWidget(browse_btn, i, 2)
+
+        layout.addWidget(grid)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setStyleSheet(
+            "QPushButton { background: #252525; color: #999; border: 1px solid #3a3a3a;"
+            " border-radius: 3px; padding: 4px 12px; font-size: 12px; }"
+            "QPushButton:hover { background: #2e2e2e; color: #ddd; }"
+        )
+        cancel_btn.clicked.connect(self.reject)
+        load_btn = QPushButton("Load")
+        load_btn.setStyleSheet(
+            "QPushButton { background: #1a3d26; color: #5fd49a; border: 1px solid #2e6e42;"
+            " border-radius: 3px; padding: 4px 12px; font-size: 12px; }"
+            "QPushButton:hover { background: #147a3f; color: #fff; border-color: #3a8a52; }"
+        )
+        load_btn.clicked.connect(self.accept)
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(load_btn)
+        layout.addLayout(btn_row)
+
+    def _browse_one(self, ft: str):
+        path, _ = QFileDialog.getOpenFileName(
+            self, f"Select {FILE_TYPE_LABELS.get(ft, ft)}", "",
+            "MHD files (*.mhd);;All files (*)"
+        )
+        if path:
+            self._paths[ft] = Path(path)
+            self._path_labels[ft].setText(Path(path).name)
+            self._path_labels[ft].setStyleSheet(
+                "color: #aaa; font-size: 11px; font-style: normal;"
+            )
+
+    @property
+    def selected_paths(self) -> dict:
+        return dict(self._paths)
+
+
 class Sidebar(QWidget):
     """Hover-activated overlay sidebar with four collapsible sections."""
 
     par_selected        = pyqtSignal(object)    # Path
     scan_selected       = pyqtSignal(object)    # Path
+    manual_files_selected = pyqtSignal(dict)    # {file_type: Path}
     files_applied       = pyqtSignal(list)      # list[str] of checked file types
     orientation_changed = pyqtSignal(str)
     layout_changed      = pyqtSignal(str)
@@ -280,6 +377,10 @@ class Sidebar(QWidget):
             " border-radius: 3px; padding: 5px 8px; font-size: 12px; }"
             "QPushButton:hover { background: #147a3f; color: #fff; }"
         )
+        _grp_lbl_style = "color: #666; font-size: 11px; font-style: italic; padding: 2px 0 1px 0;"
+        _medtool_lbl = QLabel("Medtool directory structure:")
+        _medtool_lbl.setStyleSheet(_grp_lbl_style)
+        body.addWidget(_medtool_lbl)
         self._par_btn = QPushButton("Select PAR / CSV…")
         self._par_btn.setStyleSheet(_open_btn_style)
         self._par_btn.clicked.connect(self._browse_par)
@@ -290,12 +391,14 @@ class Sidebar(QWidget):
         self._scan_btn.clicked.connect(self._browse_scan)
         body.addWidget(self._scan_btn)
 
-        self._par_label = QLabel("No file loaded")
-        self._par_label.setStyleSheet(
-            "color: #666; font-size: 12px; font-style: italic; padding: 1px 0;"
-        )
-        self._par_label.setWordWrap(True)
-        body.addWidget(self._par_label)
+        body.addWidget(_sep())
+        _nonstd_lbl = QLabel("Non-standard directory structure:")
+        _nonstd_lbl.setStyleSheet(_grp_lbl_style)
+        body.addWidget(_nonstd_lbl)
+        self._manual_btn = QPushButton("Select files manually…")
+        self._manual_btn.setStyleSheet(_open_btn_style)
+        self._manual_btn.clicked.connect(self._browse_manual)
+        body.addWidget(self._manual_btn)
 
         body.addWidget(_sep())
         self._sec_display = _Section("Display", expanded=True)
@@ -320,6 +423,9 @@ class Sidebar(QWidget):
             cb.setChecked(ft in _default_checked)
             cb.setStyleSheet(_cb_style)
             cb.toggled.connect(lambda _: self._update_file_count())
+            cb.toggled.connect(lambda _: _settings.save(
+                {'checked_file_types': self.checked_file_types()}
+            ))
             self._file_checks[ft] = cb
             cb_col.addWidget(cb)
         cb_col.addStretch()
@@ -409,29 +515,17 @@ class Sidebar(QWidget):
         drow.setSpacing(6)
         drow.addWidget(_mini_label("DOWNSAMPLING"))
         drow.addStretch()
-        _ds_combo_style = (
-            "QComboBox { background: #252525; color: #ccc; border: 1px solid #3a3a3a;"
-            " border-radius: 2px; font-size: 11px; padding: 1px 3px; }"
-            "QComboBox::drop-down { border: none; width: 14px; }"
-            "QComboBox QAbstractItemView { background: #252525; color: #ccc;"
-            " selection-background-color: #147a3f; }"
-        )
-        self._downsample_combo = _ScrollLockCombo()
-        self._downsample_combo.addItem("None", 1)
-        self._downsample_combo.addItem("2×",   2)
-        self._downsample_combo.addItem("4×",   4)
-        self._downsample_combo.setFixedWidth(52)
-        self._downsample_combo.setStyleSheet(_ds_combo_style)
-        self._downsample_combo.setToolTip(
-            "Downsample volumes on load (stride per axis).\n"
-            "2× = half resolution in each dimension.\n"
-            "4× = quarter resolution in each dimension.\n"
+        self._turbo_idx = 0
+        self._turbo_btn = QPushButton("NONE")
+        self._turbo_btn.setFixedSize(42, 22)
+        self._turbo_btn.setToolTip(
+            "Cycle downsampling on load (stride per axis).\n"
+            "2× = half resolution.  4× = quarter resolution.\n"
             "Takes effect on the next Load."
         )
-        self._downsample_combo.currentIndexChanged.connect(
-            lambda _: self.turbo_changed.emit(self._downsample_combo.currentData())
-        )
-        drow.addWidget(self._downsample_combo)
+        self._turbo_btn.setStyleSheet(_TURBO_OFF_STYLE)
+        self._turbo_btn.clicked.connect(self._on_turbo_cycle)
+        drow.addWidget(self._turbo_btn)
         db.addWidget(ds_row)
 
         db.addWidget(_sep())
@@ -757,6 +851,13 @@ class Sidebar(QWidget):
         self._indiv_list.currentRowChanged.connect(self._on_row_changed)
         body.addWidget(self._indiv_list)
 
+        self._par_label = QLabel("No file loaded")
+        self._par_label.setStyleSheet(
+            "color: #555; font-size: 11px; font-style: italic; padding: 3px 10px 1px 10px;"
+        )
+        self._par_label.setWordWrap(True)
+        body.addWidget(self._par_label)
+
     # ── Animation ─────────────────────────────────────────────────────────────
 
     def _setup_animation(self):
@@ -939,6 +1040,21 @@ class Sidebar(QWidget):
             self._tag_list_col.addWidget(btn)
         self._tag_list_col.addStretch()
 
+    def apply_saved_settings(self, turbo_stride: int, checked_types: list[str]) -> None:
+        """Restore persisted user preferences on startup."""
+        _strides = [1, 2, 4]
+        _labels  = ["NONE", "2×", "4×"]
+        self._turbo_idx = _strides.index(turbo_stride) if turbo_stride in _strides else 0
+        self._turbo_btn.setText(_labels[self._turbo_idx])
+        self._turbo_btn.setStyleSheet(
+            _TURBO_OFF_STYLE if turbo_stride == 1 else _TURBO_ON_STYLE
+        )
+        for ft, cb in self._file_checks.items():
+            cb.blockSignals(True)
+            cb.setChecked(ft in checked_types)
+            cb.blockSignals(False)
+        self._update_file_count()
+
     def set_controls_enabled(self, enabled: bool):
         # Navigation stays active so the user can cancel a slow load by moving elsewhere.
         # Only the file selector is locked while loading.
@@ -951,6 +1067,18 @@ class Sidebar(QWidget):
     def _update_file_count(self):
         n = sum(1 for cb in self._file_checks.values() if cb.isChecked())
         self._file_count_lbl.setText(f"{n} selected")
+
+    def _on_turbo_cycle(self):
+        _labels  = ["NONE", "2×", "4×"]
+        _strides = [1, 2, 4]
+        self._turbo_idx = (self._turbo_idx + 1) % 3
+        label  = _labels[self._turbo_idx]
+        stride = _strides[self._turbo_idx]
+        self._turbo_btn.setText(label)
+        self._turbo_btn.setStyleSheet(
+            _TURBO_OFF_STYLE if stride == 1 else _TURBO_ON_STYLE
+        )
+        self.turbo_changed.emit(stride)
 
     def _on_sync_toggled(self, checked: bool):
         self._sync_btn.setText("ON" if checked else "OFF")
@@ -993,6 +1121,21 @@ class Sidebar(QWidget):
             self._poll.start()
         if path:
             self.scan_selected.emit(Path(path))
+
+    def _browse_manual(self):
+        file_types = self.checked_file_types() or list(FILE_TYPE_ORDER)
+        dlg = _ManualFileSelectDialog(file_types, self)
+        self._pinned = True
+        result = dlg.exec()
+        self._pinned = False
+        if not self.rect().contains(self.mapFromGlobal(QCursor.pos())):
+            self._dialog_grace = True
+            self._poll.setInterval(500)
+            self._poll.start()
+        if result == QDialog.DialogCode.Accepted:
+            paths = dlg.selected_paths
+            if paths:
+                self.manual_files_selected.emit(paths)
 
     def checked_file_types(self) -> list[str]:
         return [ft for ft, cb in self._file_checks.items() if cb.isChecked()]

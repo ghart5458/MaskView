@@ -4,6 +4,7 @@ from pathlib import Path
 from PyQt6.QtCore import QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QHBoxLayout, QMainWindow, QVBoxLayout, QWidget
 
+from .. import settings as _settings
 from ..files.loader import compute_display_range, load_volume
 from ..files.resolver import (
     FILE_TYPE_LABELS, FILE_TYPE_ORDER, display_max, resolve_file,
@@ -199,8 +200,11 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
         self._individuals: list[Individual] = []
         self._current_idx = -1
-        self._session_types: list[str] = list(_DEFAULT_FILE_TYPES)
         self._par_path: Path | None = None
+
+        _saved = _settings.load()
+        self._session_types: list[str] = _saved.get('checked_file_types', list(_DEFAULT_FILE_TYPES))
+        self._saved_turbo_stride: int  = _saved.get('turbo_stride', 1)
         self._loading = False
         self._loader: _LoaderThread | None = None
         self._turbo_step = 1
@@ -227,6 +231,7 @@ class MainWindow(QMainWindow):
         self.setStyleSheet("QMainWindow { background: #111; }")
 
         self._sidebar = Sidebar()
+        self._sidebar.apply_saved_settings(self._saved_turbo_stride, self._session_types)
         self._viewer  = MultiViewer()
 
         content = QWidget()
@@ -244,6 +249,7 @@ class MainWindow(QMainWindow):
 
         self._sidebar.par_selected.connect(self._on_par_selected)
         self._sidebar.scan_selected.connect(self._on_scan_selected)
+        self._sidebar.manual_files_selected.connect(self._on_manual_files_selected)
         self._sidebar.files_applied.connect(self._on_files_applied)
         self._sidebar.orientation_changed.connect(self._viewer.set_orientation)
         self._sidebar.layout_changed.connect(self._viewer.set_layout_mode)
@@ -272,6 +278,7 @@ class MainWindow(QMainWindow):
         self._turbo_step = step
         self._cancel_preloaders()
         self._preload_cache.clear()
+        _settings.save({'turbo_stride': step})
 
     def _on_par_selected(self, path: Path):
         self._cancel_preloaders()
@@ -341,7 +348,7 @@ class MainWindow(QMainWindow):
         if not resolved:
             return
 
-        oldname = base_path.name
+        oldname = path.stem
         ind = Individual(
             oldname=oldname, name=oldname,
             res=0.0, dim1=0, dim2=0, dim3=0,
@@ -354,7 +361,7 @@ class MainWindow(QMainWindow):
         self._current_idx    = 0
 
         self._annot_mgr.load(
-            base_path / (oldname + "_annotations.csv"),
+            base_path / oldname,
             [oldname],
             FILE_TYPE_ORDER,
         )
@@ -367,6 +374,46 @@ class MainWindow(QMainWindow):
         self._sidebar.update_tag_list([], "")
 
         self._start_load_direct(resolved)
+
+    def _on_manual_files_selected(self, file_paths: dict):
+        if not file_paths:
+            return
+        self._cancel_preloaders()
+        self._preload_cache.clear()
+        self._single_scan_mode = True
+        self._par_path = None
+
+        first_path = next(iter(file_paths.values()))
+        base_path = first_path.parent
+        self._scan_base_path = base_path
+        self._scan_resolved_paths = dict(file_paths)
+
+        oldname = first_path.stem
+        ind = Individual(
+            oldname=oldname, name=oldname,
+            res=0.0, dim1=0, dim2=0, dim3=0,
+            kc='0', kpoint='0', kout='0', kin='0',
+            path=str(base_path.parent),
+            species='', population='', specimen='', bone='', portion='',
+            raw_fields={},
+        )
+        self._individuals = [ind]
+        self._current_idx = 0
+
+        self._annot_mgr.load(
+            base_path / oldname,
+            [oldname],
+            FILE_TYPE_ORDER,
+        )
+
+        self._sidebar.set_par_label(None)
+        available = {ft: (ft in file_paths) for ft in FILE_TYPE_ORDER}
+        self._sidebar.update_file_availability(available, set(file_paths.keys()))
+        self._sidebar.load_individuals([ind])
+        self._sidebar.select_individual_silent(0)
+        self._sidebar.update_tag_list([], "")
+
+        self._start_load_direct(file_paths)
 
     def _start_load_direct(self, file_paths: dict):
         self._cancel_loader()
@@ -548,6 +595,7 @@ class MainWindow(QMainWindow):
         if self._current_idx < 0:
             return
         self._session_types = list(file_types)
+        _settings.save({'checked_file_types': file_types})
         self._cancel_preloaders()
         self._preload_cache.clear()
         self._cancel_loader()

@@ -24,8 +24,14 @@ FILE_TYPE_ORDER: list[str] = [
 # (subfolder, filename_patterns, declared_display_max)
 # display_max=None → auto percentile B&C (original CT only)
 _FILE_SPECS: dict[str, tuple[str, list[str], int | None]] = {
-    'original':   ('00_Original', ['{oldname}.mhd'],                                                           None),
-    'seg':        ('01_Seg',      ['{name}_seg.mhd'],                                                          1),
+    'original':   ('00_Original', ['{oldname}_reoriented_cropped.mhd',
+                                   '{oldname}_cropped.mhd',
+                                   '{oldname}_reoriented.mhd',
+                                   '{oldname}.mhd'],                                                           None),
+    'seg':        ('01_Seg',      ['{name}_seg_cropped_capped.mhd',
+                                   '{name}_seg_capped.mhd',
+                                   '{name}_seg_cropped.mhd',
+                                   '{name}_seg.mhd'],                                                          1),
     'rdn_seg':    ('01_Seg',      ['{oldname}_RDN_seg.mhd'],                                                   1),
     'close':      ('02_Close',    ['{name}_Close_kc{kc}_{kpoint}.mhd'],                                        1),
     'outer':      ('03_OuterMask',['{name}_OuterMask_kc{kc}_{kpoint}_kout{kout}.mhd',
@@ -128,8 +134,19 @@ def resolve_file_from_scan(base_path: Path, file_type: str) -> Path | None:
 
     candidates = sorted(folder.glob('*.mhd'))
 
-    if file_type == 'seg':
+    if file_type == 'original':
+        for suffix in ('_reoriented_cropped.mhd', '_cropped.mhd', '_reoriented.mhd'):
+            match = next((p for p in candidates if p.name.endswith(suffix)), None)
+            if match:
+                return match
+        return candidates[0] if candidates else None
+    elif file_type == 'seg':
         candidates = [p for p in candidates if '_RDN_' not in p.stem]
+        for suffix in ('_seg_cropped_capped.mhd', '_seg_capped.mhd', '_seg_cropped.mhd', '_seg.mhd'):
+            match = next((p for p in candidates if p.name.endswith(suffix)), None)
+            if match:
+                return match
+        return candidates[0] if candidates else None
     elif file_type == 'rdn_seg':
         candidates = [p for p in candidates if '_RDN_' in p.stem]
     elif file_type == 'masksegin':
