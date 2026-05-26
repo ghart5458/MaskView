@@ -58,17 +58,25 @@ def _make_individual(row: dict) -> Individual:
     )
 
 
+def _detect_delim(header: str) -> str:
+    tc, sc, cc = header.count('\t'), header.count(';'), header.count(',')
+    if tc >= sc and tc >= cc:
+        return '\t'
+    return ';' if sc >= cc else ','
+
+
 def parse_par(path: str | Path) -> list[Individual]:
     lines = Path(path).read_text(encoding='utf-8').splitlines()
     lines = [l for l in lines if l.strip()]
     if not lines:
         return []
 
-    headers = [h.lstrip('$') for h in lines[0].split('\t')]
+    delim = _detect_delim(lines[0])
+    headers = [h.lstrip('$').strip() for h in lines[0].split(delim)]
 
     individuals = []
     for line in lines[1:]:
-        fields = line.split('\t')
+        fields = [f.strip() for f in line.split(delim)]
         if not fields or fields[0].startswith('#'):
             continue
 

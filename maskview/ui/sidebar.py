@@ -211,6 +211,7 @@ class Sidebar(QWidget):
     annotation_changed      = pyqtSignal(str, str)  # (file_type, value: "Pass"/"Review"/"Fail"/"")
     tags_visible_changed    = pyqtSignal(bool)
     tag_selected            = pyqtSignal(str, int, int, int, str)  # (file_type, x, y, z, tag_id)
+    par_refresh_requested   = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -902,12 +903,29 @@ class Sidebar(QWidget):
         self._indiv_list.currentRowChanged.connect(self._on_row_changed)
         body.addWidget(self._indiv_list)
 
+        foot = QWidget()
+        foot_row = QHBoxLayout(foot)
+        foot_row.setContentsMargins(10, 3, 6, 1)
+        foot_row.setSpacing(4)
+
         self._par_label = QLabel("No file loaded")
-        self._par_label.setStyleSheet(
-            "color: #555; font-size: 11px; font-style: italic; padding: 3px 10px 1px 10px;"
-        )
+        self._par_label.setStyleSheet("color: #555; font-size: 11px; font-style: italic;")
         self._par_label.setWordWrap(True)
-        body.addWidget(self._par_label)
+        foot_row.addWidget(self._par_label, stretch=1)
+
+        self._par_refresh_btn = QPushButton("↻")
+        self._par_refresh_btn.setFixedSize(18, 18)
+        self._par_refresh_btn.setToolTip("Refresh PAR file")
+        self._par_refresh_btn.setVisible(False)
+        self._par_refresh_btn.setStyleSheet(
+            "QPushButton { background: #252525; color: #666; border: 1px solid #333;"
+            " border-radius: 3px; font-size: 13px; padding: 0; }"
+            "QPushButton:hover { color: #aaa; background: #2e2e2e; }"
+        )
+        self._par_refresh_btn.clicked.connect(self.par_refresh_requested)
+        foot_row.addWidget(self._par_refresh_btn)
+
+        body.addWidget(foot)
 
     # ── Animation ─────────────────────────────────────────────────────────────
 
@@ -1038,14 +1056,12 @@ class Sidebar(QWidget):
     def set_par_label(self, path: Path | None):
         if path is None:
             self._par_label.setText("No file loaded")
-            self._par_label.setStyleSheet(
-                "color: #666; font-size: 12px; font-style: italic; padding: 1px 0;"
-            )
+            self._par_label.setStyleSheet("color: #666; font-size: 12px; font-style: italic;")
+            self._par_refresh_btn.setVisible(False)
         else:
             self._par_label.setText(path.name)
-            self._par_label.setStyleSheet(
-                "color: #aaa; font-size: 12px; font-style: normal; padding: 1px 0;"
-            )
+            self._par_label.setStyleSheet("color: #aaa; font-size: 12px; font-style: normal;")
+            self._par_refresh_btn.setVisible(True)
 
     def update_tag_list(self, tags: list, file_type: str) -> None:
         if file_type:

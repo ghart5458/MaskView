@@ -248,6 +248,7 @@ class MainWindow(QMainWindow):
         self._sidebar.open_now()
 
         self._sidebar.par_selected.connect(self._on_par_selected)
+        self._sidebar.par_refresh_requested.connect(self._on_par_refresh)
         self._sidebar.scan_selected.connect(self._on_scan_selected)
         self._sidebar.manual_files_selected.connect(self._on_manual_files_selected)
         self._sidebar.files_applied.connect(self._on_files_applied)
@@ -327,6 +328,34 @@ class MainWindow(QMainWindow):
         available = {ft: (resolve_file(ind, ft) is not None) for ft in FILE_TYPE_ORDER}
         default_checked = {ft for ft in self._session_types if available.get(ft)}
         self._sidebar.update_file_availability(available, default_checked)
+        self._sidebar.select_individual_silent(0)
+
+    def _on_par_refresh(self):
+        if self._par_path is None or self._single_scan_mode:
+            return
+        current_oldname = (
+            self._individuals[self._current_idx].oldname
+            if 0 <= self._current_idx < len(self._individuals) else None
+        )
+        self._cancel_preloaders()
+        self._preload_cache.clear()
+        self._individuals = parse_file(self._par_path)
+        self._annot_mgr.load(
+            self._par_path,
+            [ind.oldname for ind in self._individuals],
+            FILE_TYPE_ORDER,
+        )
+        self._sidebar.load_individuals(self._individuals)
+        if not self._individuals:
+            self._current_idx = -1
+            return
+        if current_oldname:
+            for i, ind in enumerate(self._individuals):
+                if ind.oldname == current_oldname:
+                    self._current_idx = i
+                    self._sidebar.select_individual_silent(i)
+                    return
+        self._current_idx = 0
         self._sidebar.select_individual_silent(0)
 
     def _on_scan_selected(self, path: Path):
