@@ -3,7 +3,10 @@ from pathlib import Path
 
 from PyQt6.QtCore import QThread, QTimer, pyqtSignal
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QMainWindow, QSplitter, QVBoxLayout, QWidget
+from PyQt6.QtGui import QColor, QPainter
+from PyQt6.QtWidgets import (
+    QHBoxLayout, QLabel, QMainWindow, QPushButton, QSplitter, QVBoxLayout, QWidget,
+)
 
 from .. import settings as _settings
 from ..files.loader import compute_display_range, load_volume
@@ -194,6 +197,93 @@ class _DirectLoaderThread(QThread):
         self.all_done.emit()
 
 
+# ── Session restore overlay ────────────────────────────────────────────────────
+
+class _SessionRestoreOverlay(QWidget):
+    """Full-window dim overlay with a centered card asking whether to resume."""
+    resume_requested = pyqtSignal()
+    dismissed        = pyqtSignal()
+
+    def __init__(self, par_name: str, ind_name: str, parent: QWidget):
+        super().__init__(parent)
+        self.setGeometry(parent.rect())
+
+        self._card = QWidget(self)
+        self._card.setFixedWidth(320)
+        self._card.setStyleSheet(
+            "QWidget { background: #1e1e1e; border: 1px solid #3a3a3a; border-radius: 6px; }"
+        )
+        card_lay = QVBoxLayout(self._card)
+        card_lay.setContentsMargins(20, 16, 20, 16)
+        card_lay.setSpacing(10)
+
+        title = QLabel("Resume last session?")
+        title.setStyleSheet("color: #eee; font-size: 13px; font-weight: bold; border: none;")
+        card_lay.addWidget(title)
+
+        par_lbl = QLabel(par_name)
+        par_lbl.setStyleSheet("color: #888; font-size: 11px; border: none;")
+        par_lbl.setWordWrap(True)
+        card_lay.addWidget(par_lbl)
+
+        if ind_name:
+            ind_lbl = QLabel(f"Last viewed: {ind_name}")
+            ind_lbl.setStyleSheet("color: #666; font-size: 11px; border: none;")
+            ind_lbl.setWordWrap(True)
+            card_lay.addWidget(ind_lbl)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        btn_row.addStretch()
+
+        resume_btn = QPushButton("Resume")
+        resume_btn.setStyleSheet(
+            "QPushButton { background: #1a3d26; color: #5fd49a;"
+            " border: 1px solid #2e6e42; border-radius: 3px; padding: 5px 14px; font-size: 12px; }"
+            "QPushButton:hover { background: #147a3f; color: #fff; border: none; }"
+        )
+        resume_btn.clicked.connect(self._on_resume)
+
+        fresh_btn = QPushButton("Start fresh")
+        fresh_btn.setStyleSheet(
+            "QPushButton { background: #252525; color: #888;"
+            " border: 1px solid #3a3a3a; border-radius: 3px; padding: 5px 14px; font-size: 12px; }"
+            "QPushButton:hover { background: #303030; color: #ccc; border: none; }"
+        )
+        fresh_btn.clicked.connect(self._dismiss)
+
+        btn_row.addWidget(resume_btn)
+        btn_row.addWidget(fresh_btn)
+        card_lay.addLayout(btn_row)
+
+        self._card.adjustSize()
+        self._center_card()
+
+    def _center_card(self):
+        self._card.adjustSize()
+        self._card.move(
+            (self.width()  - self._card.width())  // 2,
+            (self.height() - self._card.height()) // 2,
+        )
+
+    def _on_resume(self):
+        self.resume_requested.emit()
+        self._dismiss()
+
+    def _dismiss(self):
+        self.dismissed.emit()
+        self.setParent(None)
+
+    def mousePressEvent(self, event):
+        if not self._card.geometry().contains(event.pos()):
+            self._dismiss()
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 160))
+
+
 # ── Main window ───────────────────────────────────────────────────────────────
 
 class MainWindow(QMainWindow):
@@ -222,6 +312,7 @@ class MainWindow(QMainWindow):
         self._composite_loader: _CompositeLoaderThread | None = None
         self._pending_spec: OverlaySpec | None = None
         self._pending_channels: list | None = None
+        self._deferred_composite: list | None = None
 
         self._annot_mgr = AnnotationManager()
 
@@ -287,9 +378,58 @@ class MainWindow(QMainWindow):
         self._sidebar.anchor_cancel_requested.connect(self._on_anchor_cancel)
         self._sidebar.anchor_clear_requested.connect(self._on_anchor_clear)
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not getattr(self, '_shown_once', False):
+            self._shown_once = True
+            QTimer.singleShot(150, self._maybe_show_session_restore)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._notifs.reposition()
+        overlay = getattr(self, '_session_overlay', None)
+        if overlay is not None:
+            content = self.centralWidget()
+            if content:
+                overlay.setGeometry(content.rect())
+
+    def _maybe_show_session_restore(self):
+        saved = _settings.load()
+        last_par = saved.get('last_par_file')
+        if not last_par or not Path(last_par).exists():
+            return
+        last_idx  = saved.get('last_individual_idx', 0)
+        last_name = saved.get('last_individual_name', '')
+        content = self.centralWidget()
+        if content is None:
+            return
+        overlay = _SessionRestoreOverlay(Path(last_par).name, last_name, content)
+        overlay.resume_requested.connect(lambda: self._on_session_resume(last_par, last_idx))
+        overlay.dismissed.connect(self._on_session_overlay_dismissed)
+        self._session_overlay = overlay
+        overlay.show()
+        overlay.raise_()
+
+    def _on_session_overlay_dismissed(self):
+        self._session_overlay = None
+
+    def _on_session_resume(self, par_path_str: str, individual_idx: int):
+        path = Path(par_path_str)
+        if not path.exists():
+            return
+        self._on_par_selected(path)
+        n = len(self._individuals)
+        if n == 0:
+            return
+        idx = min(individual_idx, n - 1)
+        if idx > 0:
+            self._sidebar.select_individual_silent(idx)
+            self._current_idx = idx
+        ind = self._individuals[idx]
+        available = {ft: (resolve_file(ind, ft) is not None) for ft in FILE_TYPE_ORDER}
+        to_load = [ft for ft in self._session_types if available.get(ft)]
+        self._sidebar.update_file_availability(available, set(to_load))
+        self._start_load(ind, to_load)
 
     # ── Anchor sync ───────────────────────────────────────────────────────────
 
@@ -326,6 +466,7 @@ class MainWindow(QMainWindow):
         self._preload_cache.clear()
         self._single_scan_mode = False
         self._par_path = path
+        _settings.save({'last_par_file': str(path), 'last_individual_idx': 0, 'last_individual_name': ''})
         self._sidebar.set_par_label(path)
         self._individuals = parse_file(path)
         self._annot_mgr.load(
@@ -512,10 +653,12 @@ class MainWindow(QMainWindow):
     def _on_individual_selected(self, idx: int):
         if idx == self._current_idx and self._loading:
             return
+        self._cancel_deferred_composite()
         self._clear_anchors_on_nav()
         self._save_current_to_cache(next_idx=idx)
         self._current_idx = idx
         ind = self._individuals[idx]
+        _settings.save({'last_individual_idx': idx, 'last_individual_name': ind.oldname})
 
         available = {ft: (resolve_file(ind, ft) is not None) for ft in FILE_TYPE_ORDER}
         to_load = [ft for ft in self._session_types if available.get(ft)]
@@ -574,6 +717,7 @@ class MainWindow(QMainWindow):
     # ── Loading ───────────────────────────────────────────────────────────────
 
     def _start_load(self, ind: Individual, file_types: list[str]):
+        self._cancel_deferred_composite()
         self._cancel_loader()
         self._cancel_preloaders()
         self._viewer.clear()
@@ -633,6 +777,11 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(200, lambda: self._start_preload(self._current_idx))
         self._check_dimension_mismatch()
         self._maybe_restore_overlay()
+        if self._deferred_composite is not None:
+            specs = self._deferred_composite
+            self._deferred_composite = None
+            self._sidebar.set_composite_pending(False)
+            self._on_composite_requested(specs)
 
     # ── Pre-loading ───────────────────────────────────────────────────────────
 
@@ -739,8 +888,17 @@ class MainWindow(QMainWindow):
 
     # ── Color composite ───────────────────────────────────────────────────────
 
+    def _cancel_deferred_composite(self):
+        if self._deferred_composite is not None:
+            self._deferred_composite = None
+            self._sidebar.set_composite_pending(False)
+
     def _on_composite_requested(self, specs: list):
         if self._current_idx < 0:
+            return
+        if self._loading:
+            self._deferred_composite = specs
+            self._sidebar.set_composite_pending(True)
             return
         ind = self._individuals[self._current_idx]
 
