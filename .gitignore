@@ -17,3 +17,7 @@ reference/
 
 # Lock file
 uv.lock
+
+# User-specific settings
+maskview_settings.json
+
