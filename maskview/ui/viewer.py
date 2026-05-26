@@ -1,4 +1,4 @@
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QPoint, QPointF
+from PyQt6.QtCore import Qt, QTimer, QRect, pyqtSignal, QPoint, QPointF
 from PyQt6.QtGui import QBrush, QColor, QImage, QPainter, QPen, QPixmap, QWheelEvent, QMouseEvent
 from PyQt6.QtWidgets import (
     QGraphicsPixmapItem,
@@ -418,6 +418,8 @@ class _PanZoomView(QGraphicsView):
         self._highlight_timer.setInterval(70)
         self._highlight_timer.timeout.connect(self._highlight_tick)
 
+        self._tooltip_tag_id: str | None = None
+
         self._anchor_mode = False
         self._anchor_marker: QPointF | None = None
         self._anchor_confirmed = False
@@ -461,17 +463,23 @@ class _PanZoomView(QGraphicsView):
             self.cursor_moved.emit(sp.x(), sp.y())
 
             tip = ""
-            for col, row, _color, _tag_id, note in self._tag_markers:
+            hit_id = None
+            for col, row, _color, tag_id, note in self._tag_markers:
                 tag_vp = self.mapFromScene(QPointF(col, row))
                 dx = event.pos().x() - tag_vp.x()
                 dy = event.pos().y() - tag_vp.y()
                 if dx * dx + dy * dy < 14 ** 2:
                     tip = note
+                    hit_id = tag_id
                     break
-            if tip:
-                QToolTip.showText(self.mapToGlobal(event.pos()), tip, self)
-            else:
-                QToolTip.hideText()
+            if hit_id != self._tooltip_tag_id:
+                self._tooltip_tag_id = hit_id
+                if tip:
+                    QToolTip.showText(
+                        self.mapToGlobal(event.pos()), tip, self, QRect(), 2147483647
+                    )
+                else:
+                    QToolTip.hideText()
 
             super().mouseMoveEvent(event)
 
@@ -528,6 +536,7 @@ class _PanZoomView(QGraphicsView):
         self.centerOn(x, y)
 
     def leaveEvent(self, event):
+        self._tooltip_tag_id = None
         self.cursor_left.emit()
         super().leaveEvent(event)
 
