@@ -22,6 +22,7 @@ class VolumeViewer(QWidget):
     pan_changed         = pyqtSignal(float, float)
     cursor_moved        = pyqtSignal(float, float)   # scene x, y
     cursor_left         = pyqtSignal()
+    view_clicked        = pyqtSignal()               # any non-pan left click
     tag_place_requested = pyqtSignal(int, int, int)  # voxel x, y, z
     tag_edit_requested  = pyqtSignal(str)            # tag_id
     anchor_clicked      = pyqtSignal(float, float)   # scene x, y
@@ -57,6 +58,7 @@ class VolumeViewer(QWidget):
         self._view.wheel_scroll.connect(self._on_wheel_scroll)
         self._view.cursor_moved.connect(self.cursor_moved)
         self._view.cursor_left.connect(self.cursor_left)
+        self._view.view_clicked.connect(self.view_clicked)
         self._view.tag_scene_clicked.connect(self._on_tag_scene_clicked)
         self._view.tag_marker_clicked.connect(self.tag_edit_requested)
         self._view.anchor_scene_clicked.connect(self.anchor_clicked)
@@ -362,6 +364,7 @@ class _PanZoomView(QGraphicsView):
     wheel_scroll        = pyqtSignal(int)
     cursor_moved        = pyqtSignal(float, float)   # scene x, y
     cursor_left         = pyqtSignal()
+    view_clicked        = pyqtSignal()               # any non-pan left click
     tag_scene_clicked   = pyqtSignal(float, float)   # scene x, y for new tag placement
     tag_marker_clicked  = pyqtSignal(str)            # tag_id for edit
     anchor_scene_clicked = pyqtSignal(float, float)  # scene x, y for anchor placement
@@ -475,6 +478,7 @@ class _PanZoomView(QGraphicsView):
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
             if not self._is_panning and self._drag_start is not None:
+                self.view_clicked.emit()
                 if self._anchor_mode:
                     sp = self.mapToScene(self._drag_start)
                     self.anchor_scene_clicked.emit(sp.x(), sp.y())

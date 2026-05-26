@@ -323,7 +323,10 @@ class MultiViewer(QWidget):
         v.cursor_moved.connect(self._on_cursor_moved)
         v.cursor_left.connect(self._on_cursor_left)
         if hasattr(panel, "tags_changed"):
-            panel.tags_changed.connect(self.panel_tags_changed)
+            panel.tags_changed.connect(
+                lambda tags, ft, p=panel: self._on_tags_changed(p, tags, ft)
+            )
+        v.view_clicked.connect(lambda p=panel: self._on_panel_clicked(p))
         if hasattr(panel, "drag_started"):
             panel.drag_started.connect(lambda p=panel: self._on_drag_started(p))
         if hasattr(panel, "anchor_confirmed"):
@@ -443,11 +446,8 @@ class MultiViewer(QWidget):
     def _on_cursor_moved(self, x: float, y: float):
         src = self.sender()
         src_panel = next((p for p in self._panels if p.viewer is src), None)
-        if src_panel is not None and src_panel is not self._last_active_panel:
+        if src_panel is not None:
             self._last_active_panel = src_panel
-            if hasattr(src_panel, "current_tags"):
-                tags, ft = src_panel.current_tags()
-                self.panel_tags_changed.emit(tags, ft)
         if not self._sync_enabled:
             return
         if self._anchors and src_panel is not None:
@@ -467,6 +467,25 @@ class MultiViewer(QWidget):
             for p in self._panels:
                 if p.viewer is not src:
                     p.viewer.set_external_cursor(x, y)
+
+    def emit_active_panel_tags(self):
+        panel = self._last_active_panel
+        if panel is None and self._panels:
+            panel = self._panels[0]
+        if panel and hasattr(panel, "current_tags"):
+            tags, ft = panel.current_tags()
+            self.panel_tags_changed.emit(tags, ft)
+
+    def _on_tags_changed(self, panel, tags, ft):
+        self._last_active_panel = panel
+        self.panel_tags_changed.emit(tags, ft)
+
+    def _on_panel_clicked(self, panel):
+        if panel is not self._last_active_panel:
+            self._last_active_panel = panel
+            if hasattr(panel, "current_tags"):
+                tags, ft = panel.current_tags()
+                self.panel_tags_changed.emit(tags, ft)
 
     def _on_cursor_left(self):
         src = self.sender()

@@ -1251,7 +1251,7 @@ class ViewerPanel(QWidget):
 
     def _on_tag_mode_toggled(self, active: bool):
         self._viewer.set_tag_mode(active)
-        if active and self._tag_store is not None:
+        if self._tag_store is not None:
             self.tags_changed.emit(self._tag_store.tags, self._file_type)
 
     def _on_tag_place_requested(self, x: int, y: int, z: int):
