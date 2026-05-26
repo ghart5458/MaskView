@@ -1,3 +1,4 @@
+import csv
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -65,50 +66,46 @@ def _detect_delim(header: str) -> str:
     return ';' if sc >= cc else ','
 
 
-def parse_par(path: str | Path) -> list[Individual]:
-    lines = Path(path).read_text(encoding='utf-8').splitlines()
-    lines = [l for l in lines if l.strip()]
-    if not lines:
+def _parse_rows(text: str) -> list[Individual]:
+    """Parse delimiter-separated tabular text into a list of Individuals.
+
+    Uses csv.reader so quoted fields containing delimiters are handled correctly.
+    Leading $ is always stripped from column headers (harmless for plain CSVs).
+    """
+    lines = text.splitlines()
+    header_line = next((l for l in lines if l.strip()), None)
+    if header_line is None:
         return []
 
-    delim = _detect_delim(lines[0])
-    headers = [h.lstrip('$').strip() for h in lines[0].split(delim)]
+    delim = _detect_delim(header_line)
+    reader = csv.reader(lines, delimiter=delim)
+
+    raw_headers = next(reader, None)
+    if not raw_headers:
+        return []
+    headers = [h.lstrip('$').strip() for h in raw_headers]
 
     individuals = []
-    for line in lines[1:]:
-        fields = [f.strip() for f in line.split(delim)]
-        if not fields or fields[0].startswith('#'):
+    for row_fields in reader:
+        if not row_fields or not any(f.strip() for f in row_fields):
             continue
-
-        row = dict(zip(headers, fields))
-
+        if row_fields[0].lstrip().startswith('#'):
+            continue
+        row = dict(zip(headers, [f.strip() for f in row_fields]))
         try:
             individuals.append(_make_individual(row))
         except (ValueError, KeyError):
             continue
 
     return individuals
+
+
+def parse_par(path: str | Path) -> list[Individual]:
+    return _parse_rows(Path(path).read_text(encoding='utf-8-sig'))
 
 
 def parse_csv(path: str | Path) -> list[Individual]:
-    lines = Path(path).read_text(encoding='utf-8').splitlines()
-    lines = [l for l in lines if l.strip() and not l.lstrip().startswith('#')]
-    if not lines:
-        return []
-
-    delim = ',' if lines[0].count(',') >= lines[0].count(';') else ';'
-    headers = [h.strip() for h in lines[0].split(delim)]
-
-    individuals = []
-    for line in lines[1:]:
-        fields = [f.strip() for f in line.split(delim)]
-        row = dict(zip(headers, fields))
-        try:
-            individuals.append(_make_individual(row))
-        except (ValueError, KeyError):
-            continue
-
-    return individuals
+    return _parse_rows(Path(path).read_text(encoding='utf-8-sig'))
 
 
 def parse_file(path: str | Path) -> list[Individual]:
