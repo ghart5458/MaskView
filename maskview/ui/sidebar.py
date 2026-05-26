@@ -1,9 +1,9 @@
 from pathlib import Path
 
-from PyQt6.QtCore import QPoint, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, QPoint, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QCursor
 from PyQt6.QtWidgets import (
-    QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
+    QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
     QGridLayout, QHBoxLayout, QLabel, QListWidget, QMenu, QPushButton,
     QRadioButton, QScrollArea, QSlider, QVBoxLayout, QWidget,
 )
@@ -15,6 +15,25 @@ from .annotations import BTN_TO_VALUE, VALUE_TO_BTN
 from .viewer_panel import _ColorSwatchPicker
 
 _SIDEBAR_W = 280
+
+
+class _WheelIsolator(QObject):
+    """Installed on a scroll widget's viewport; consumes wheel events so they
+    never escape to the outer sidebar scroll area when the widget hits its limit.
+    Forwards the event directly to the scrollbar so Qt handles trackpad pixel-delta
+    and mouse-wheel sensitivity natively, then returns True to stop propagation."""
+
+    def __init__(self, widget):
+        super().__init__(widget)          # QObject child → kept alive with the widget
+        self._bar = widget.verticalScrollBar()
+        widget.viewport().installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.Wheel:
+            QApplication.sendEvent(self._bar, event)
+            return True   # event consumed; parent scroll area never sees it
+        return False
+
 
 _TURBO_OFF_STYLE = (
     "QPushButton { background: #252525; color: #666; border: 1px solid #333;"
@@ -284,12 +303,14 @@ class Sidebar(QWidget):
         col.addWidget(ca_row)
 
         self._sec_file    = _Section("File",          expanded=True)
+        self._sec_display = _Section("Display",       expanded=True)
         self._sec_overlay = _Section("Color Overlay", expanded=False)
         self._sec_tags    = _Section("Tagging",       expanded=False)
         self._sec_annot   = _Section("Annotations",   expanded=False)
         self._sec_indiv   = _Section("Individuals",   expanded=True)
 
         col.addWidget(self._sec_file)
+        col.addWidget(self._sec_display)
         col.addWidget(self._sec_overlay)
         col.addWidget(self._sec_tags)
         col.addWidget(self._sec_annot)
@@ -329,6 +350,7 @@ class Sidebar(QWidget):
         self._refresh_nav(-1)
 
         self._build_file_section()
+        self._build_display_section()
         self._build_overlay_section()
         self._build_tags_section()
         self._build_annotations_section([])
@@ -367,11 +389,10 @@ class Sidebar(QWidget):
         self._manual_btn.clicked.connect(self._browse_manual)
         body.addWidget(self._manual_btn)
 
-        body.addWidget(_sep())
-        self._sec_display = _Section("Display", expanded=True)
-        db = self._sec_display.body
-        db.setContentsMargins(8, 6, 8, 8)
-        db.setSpacing(4)
+    def _build_display_section(self):
+        body = self._sec_display.body
+        body.setContentsMargins(8, 6, 8, 8)
+        body.setSpacing(4)
 
         _cb_style = (
             "QCheckBox { color: #888; font-size: 12px; padding: 1px 0; }"
@@ -404,24 +425,25 @@ class Sidebar(QWidget):
         cb_scroll.setFixedHeight(120)
         cb_scroll.setStyleSheet("""
             QScrollArea { border: 1px solid #2e2e2e; background: #181818; }
-            QScrollBar:vertical { background: #141414; width: 8px; border: none; }
+            QScrollBar:vertical { background: #181818; width: 8px; border: none; }
             QScrollBar::handle:vertical {
                 background: #3a3a3a; border-radius: 3px; min-height: 16px;
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
         """)
         cb_scroll.setWidget(cb_content)
-        db.addWidget(cb_scroll)
+        _WheelIsolator(cb_scroll)
+        body.addWidget(cb_scroll)
 
         self._file_count_lbl = QLabel()
         self._file_count_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
         self._file_count_lbl.setStyleSheet(
             "color: #666; font-size: 11px; padding: 0 2px 0 0;"
         )
-        db.addWidget(self._file_count_lbl)
+        body.addWidget(self._file_count_lbl)
         self._update_file_count()
 
-        db.addWidget(_sep())
+        body.addWidget(_sep())
         self._apply_btn = QPushButton("Load")
         self._apply_btn.setEnabled(False)
         self._apply_btn.setStyleSheet(
@@ -434,10 +456,10 @@ class Sidebar(QWidget):
             " border: 1px solid #252525; }"
         )
         self._apply_btn.clicked.connect(self._on_apply)
-        db.addWidget(self._apply_btn)
+        body.addWidget(self._apply_btn)
 
-        db.addWidget(_sep())
-        db.addWidget(_mini_label("ORIENTATION"))
+        body.addWidget(_sep())
+        body.addWidget(_mini_label("ORIENTATION"))
         orient_row = QWidget()
         orow = QHBoxLayout(orient_row)
         orow.setContentsMargins(0, 0, 0, 0)
@@ -453,10 +475,10 @@ class Sidebar(QWidget):
             self._orient_group.addButton(rb)
             orow.addWidget(rb)
         orow.addStretch()
-        db.addWidget(orient_row)
+        body.addWidget(orient_row)
 
-        db.addWidget(_sep())
-        db.addWidget(_mini_label("LAYOUT"))
+        body.addWidget(_sep())
+        body.addWidget(_mini_label("LAYOUT"))
         layout_row = QWidget()
         lrow = QHBoxLayout(layout_row)
         lrow.setContentsMargins(0, 0, 0, 0)
@@ -472,9 +494,9 @@ class Sidebar(QWidget):
             self._layout_group.addButton(rb)
             lrow.addWidget(rb)
         lrow.addStretch()
-        db.addWidget(layout_row)
+        body.addWidget(layout_row)
 
-        db.addWidget(_sep())
+        body.addWidget(_sep())
         ds_row = QWidget()
         ds_row.setStyleSheet("background: transparent;")
         drow = QHBoxLayout(ds_row)
@@ -493,9 +515,9 @@ class Sidebar(QWidget):
         self._turbo_btn.setStyleSheet(_TURBO_OFF_STYLE)
         self._turbo_btn.clicked.connect(self._on_turbo_cycle)
         drow.addWidget(self._turbo_btn)
-        db.addWidget(ds_row)
+        body.addWidget(ds_row)
 
-        db.addWidget(_sep())
+        body.addWidget(_sep())
         sync_row = QWidget()
         sync_row.setStyleSheet("background: transparent;")
         srow = QHBoxLayout(sync_row)
@@ -517,9 +539,9 @@ class Sidebar(QWidget):
         )
         self._sync_btn.toggled.connect(self._on_sync_toggled)
         srow.addWidget(self._sync_btn)
-        db.addWidget(sync_row)
+        body.addWidget(sync_row)
 
-        db.addWidget(_sep())
+        body.addWidget(_sep())
         anchor_row = QWidget()
         anchor_row.setStyleSheet("background: transparent;")
         arow = QHBoxLayout(anchor_row)
@@ -554,7 +576,7 @@ class Sidebar(QWidget):
         self._anchor_cancel_btn.clicked.connect(self._on_anchor_cancel_clicked)
         self._anchor_cancel_btn.hide()
         arow.addWidget(self._anchor_cancel_btn)
-        db.addWidget(anchor_row)
+        body.addWidget(anchor_row)
 
         self._anchor_clear_btn = QPushButton("Clear anchors")
         self._anchor_clear_btn.setStyleSheet(
@@ -564,9 +586,7 @@ class Sidebar(QWidget):
         )
         self._anchor_clear_btn.clicked.connect(self.anchor_clear_requested)
         self._anchor_clear_btn.hide()
-        db.addWidget(self._anchor_clear_btn)
-
-        body.addWidget(self._sec_display)
+        body.addWidget(self._anchor_clear_btn)
 
     def _build_overlay_section(self):
         body = self._sec_overlay.body
@@ -842,19 +862,20 @@ class Sidebar(QWidget):
         )
         self._indiv_list.setStyleSheet("""
             QListWidget {
-                background: #141414; border: 1px solid #2e2e2e;
+                background: #181818; border: 1px solid #2e2e2e;
                 color: #ccc; font-size: 12px;
             }
             QListWidget::item { padding: 3px 10px; border-bottom: 1px solid #1c1c1c; }
             QListWidget::item:selected { background: #147a3f; color: #fff; }
             QListWidget::item:hover:!selected { background: #1e1e1e; }
-            QScrollBar:vertical { background: #141414; width: 8px; border: none; }
+            QScrollBar:vertical { background: #181818; width: 8px; border: none; }
             QScrollBar::handle:vertical {
                 background: #3a3a3a; border-radius: 3px; min-height: 16px;
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
         """)
         self._indiv_list.currentRowChanged.connect(self._on_row_changed)
+        _WheelIsolator(self._indiv_list)
         body.addWidget(self._indiv_list)
 
         foot = QWidget()
@@ -889,8 +910,8 @@ class Sidebar(QWidget):
         self._loaded_idx  = -1
         self._indiv_list.blockSignals(True)
         self._indiv_list.clear()
-        for ind in individuals:
-            self._indiv_list.addItem(ind.oldname)
+        for i, ind in enumerate(individuals):
+            self._indiv_list.addItem(f"{i + 1}.  {ind.oldname}")
         self._indiv_list.blockSignals(False)
         self._counter.setText("— / —")
         self._refresh_nav(-1)
@@ -1012,12 +1033,33 @@ class Sidebar(QWidget):
             cb.blockSignals(False)
         self._update_file_count()
 
+    def set_composite_pending(self, pending: bool):
+        if pending:
+            self._create_composite_btn.setText("Queued…")
+            self._create_composite_btn.setStyleSheet(
+                "QPushButton { background: #2a2a18; color: #c8b84a;"
+                " border: 1px solid #6e6012;"
+                " border-radius: 3px; padding: 5px 8px; font-size: 12px; }"
+                "QPushButton:hover { background: #3a3a20; color: #ffe066;"
+                " border-color: #9e8a1a; }"
+            )
+        else:
+            self._create_composite_btn.setText("Create Composite")
+            self._create_composite_btn.setStyleSheet(
+                "QPushButton { background: #1a3d26; color: #5fd49a;"
+                " border: 1px solid #2e6e42;"
+                " border-radius: 3px; padding: 5px 8px; font-size: 12px; }"
+                "QPushButton:hover { background: #147a3f; color: #fff;"
+                " border-color: #3a8a52; }"
+            )
+
     def set_controls_enabled(self, enabled: bool):
         # Navigation stays active so the user can cancel a slow load by moving elsewhere.
-        # Only the file selector is locked while loading.
+        # Only the file selector and composite creation are locked while loading.
         for ft, cb in self._file_checks.items():
             cb.setEnabled(enabled and self._file_available.get(ft, False))
         self._apply_btn.setEnabled(enabled and self._current_idx >= 0)
+        self._create_composite_btn.setEnabled(enabled)
 
     def update_anchor_state(self, active: bool, has_anchors: bool):
         """Reflect current anchor mode in the sidebar buttons."""
