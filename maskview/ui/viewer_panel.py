@@ -1208,6 +1208,17 @@ class ViewerPanel(QWidget):
         tags = self._tag_store.tags if self._tag_store else []
         return (tags, self._file_type)
 
+    def edit_tag(self, tag_id: str):
+        """Open the edit dialog for tag_id (same as clicking the tag in the scene)."""
+        self._on_tag_edit_requested(tag_id)
+
+    def delete_tag(self, tag_id: str):
+        if self._tag_store is None:
+            return
+        self._tag_store.remove(tag_id)
+        self._viewer.set_tags(self._tag_store.tags)
+        self.tags_changed.emit(self._tag_store.tags, self._file_type)
+
     def set_swap_highlight(self, active: bool):
         style = ("#titleBar { background: #2d2d2d; border: 2px solid #2ce67f; }"
                  if active else

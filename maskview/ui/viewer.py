@@ -1,4 +1,4 @@
-from PyQt6.QtCore import Qt, QTimer, QRect, pyqtSignal, QPoint, QPointF
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QPoint, QPointF
 from PyQt6.QtGui import QBrush, QColor, QImage, QPainter, QPen, QPixmap, QWheelEvent, QMouseEvent
 from PyQt6.QtWidgets import (
     QGraphicsPixmapItem,
@@ -7,7 +7,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QSlider,
-    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -40,6 +39,7 @@ class VolumeViewer(QWidget):
         self._threshold_rgb    = [44, 230, 127]    # theme green (#2ce67f)
         self._tags: list       = []
         self._show_tags        = True
+        self._turbo_step       = 1
         self._setup_ui()
 
     def _setup_ui(self):
@@ -215,37 +215,39 @@ class VolumeViewer(QWidget):
         if not self._show_tags or self._data is None:
             self._view.set_tag_markers([])
             return
+        s = self._turbo_step
         z = self._current_z
         markers = []
         for tag in self._tags:
             if self._orientation == "XY":
-                if tag.z == z:
-                    markers.append((tag.x, tag.y, tag.color, tag.id, tag.note))
+                if tag.z // s == z:
+                    markers.append((tag.x // s, tag.y // s, tag.color, tag.id, tag.note))
             elif self._orientation == "XZ":
-                if tag.y == z:
-                    markers.append((tag.x, tag.z, tag.color, tag.id, tag.note))
+                if tag.y // s == z:
+                    markers.append((tag.x // s, tag.z // s, tag.color, tag.id, tag.note))
             else:  # YZ
-                if tag.x == z:
-                    markers.append((tag.y, tag.z, tag.color, tag.id, tag.note))
+                if tag.x // s == z:
+                    markers.append((tag.y // s, tag.z // s, tag.color, tag.id, tag.note))
         self._view.set_tag_markers(markers)
 
     def _on_tag_scene_clicked(self, sx: float, sy: float):
         if self._data is None:
             return
+        s = self._turbo_step
         z_dim, y_dim, x_dim = self._data.shape
         z = self._current_z
         if self._orientation == "XY":
-            x  = max(0, min(int(sx), x_dim - 1))
-            y  = max(0, min(int(sy), y_dim - 1))
-            vz = z
+            x  = max(0, min(int(sx) * s, x_dim * s - 1))
+            y  = max(0, min(int(sy) * s, y_dim * s - 1))
+            vz = z * s
         elif self._orientation == "XZ":
-            x  = max(0, min(int(sx), x_dim - 1))
-            y  = z
-            vz = max(0, min(int(sy), z_dim - 1))
+            x  = max(0, min(int(sx) * s, x_dim * s - 1))
+            y  = z * s
+            vz = max(0, min(int(sy) * s, z_dim * s - 1))
         else:  # YZ
-            x  = z
-            y  = max(0, min(int(sx), y_dim - 1))
-            vz = max(0, min(int(sy), z_dim - 1))
+            x  = z * s
+            y  = max(0, min(int(sx) * s, y_dim * s - 1))
+            vz = max(0, min(int(sy) * s, z_dim * s - 1))
         self.tag_place_requested.emit(x, y, vz)
 
     def _on_slider_changed(self, value: int):
@@ -274,6 +276,9 @@ class VolumeViewer(QWidget):
     def _fit_to_view(self):
         self._view.fitInView(self._scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
         self._update_info()
+
+    def set_turbo_step(self, step: int):
+        self._turbo_step = max(1, step)
 
     def set_orientation(self, orientation: str):
         """Switch between XY / XZ / YZ planes. Silent — no signals emitted."""
@@ -419,6 +424,13 @@ class _PanZoomView(QGraphicsView):
         self._highlight_timer.timeout.connect(self._highlight_tick)
 
         self._tooltip_tag_id: str | None = None
+        self._tag_tip = QLabel("", self.viewport())
+        self._tag_tip.setStyleSheet(
+            "QLabel { background: #1e1e1e; color: #ddd; border: 1px solid #444;"
+            " border-radius: 3px; padding: 3px 6px; font-size: 12px; }"
+        )
+        self._tag_tip.setVisible(False)
+        self._tag_tip.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
         self._anchor_mode = False
         self._anchor_marker: QPointF | None = None
@@ -475,11 +487,19 @@ class _PanZoomView(QGraphicsView):
             if hit_id != self._tooltip_tag_id:
                 self._tooltip_tag_id = hit_id
                 if tip:
-                    QToolTip.showText(
-                        self.mapToGlobal(event.pos()), tip, self, QRect(), 2147483647
-                    )
+                    self._tag_tip.setText(tip)
+                    self._tag_tip.adjustSize()
+                    pos = event.pos() + QPoint(12, 12)
+                    vp = self.viewport()
+                    if pos.x() + self._tag_tip.width() > vp.width():
+                        pos.setX(event.pos().x() - self._tag_tip.width() - 4)
+                    if pos.y() + self._tag_tip.height() > vp.height():
+                        pos.setY(event.pos().y() - self._tag_tip.height() - 4)
+                    self._tag_tip.move(pos)
+                    self._tag_tip.show()
+                    self._tag_tip.raise_()
                 else:
-                    QToolTip.hideText()
+                    self._tag_tip.hide()
 
             super().mouseMoveEvent(event)
 
@@ -537,6 +557,7 @@ class _PanZoomView(QGraphicsView):
 
     def leaveEvent(self, event):
         self._tooltip_tag_id = None
+        self._tag_tip.hide()
         self.cursor_left.emit()
         super().leaveEvent(event)
 
