@@ -2,7 +2,8 @@ import ctypes
 from pathlib import Path
 
 from PyQt6.QtCore import QThread, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QHBoxLayout, QMainWindow, QVBoxLayout, QWidget
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QMainWindow, QSplitter, QVBoxLayout, QWidget
 
 from .. import settings as _settings
 from ..files.loader import compute_display_range, load_volume
@@ -234,21 +235,31 @@ class MainWindow(QMainWindow):
         self._sidebar.apply_saved_settings(self._saved_turbo_stride, self._session_types)
         self._viewer  = MultiViewer()
 
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(4)
+        splitter.setStyleSheet(
+            "QSplitter::handle { background: #2c2c2c; }"
+            "QSplitter::handle:hover { background: #3a3a3a; }"
+        )
+        splitter.addWidget(self._sidebar)
+        splitter.addWidget(self._viewer)
+        splitter.setSizes([280, 1200])
+        splitter.setCollapsible(0, True)
+        splitter.setCollapsible(1, False)
+
         content = QWidget()
         content.setStyleSheet("background: #111;")
-        hbox = QHBoxLayout(content)
-        hbox.setContentsMargins(0, 0, 0, 0)
-        hbox.setSpacing(0)
-        hbox.addWidget(self._sidebar)
-        hbox.addWidget(self._viewer, stretch=1)
+        vbox = QVBoxLayout(content)
+        vbox.setContentsMargins(0, 0, 0, 0)
+        vbox.setSpacing(0)
+        vbox.addWidget(splitter)
         self.setCentralWidget(content)
 
         self._notifs = NotifManager(content)
 
-        self._sidebar.open_now()
-
         self._sidebar.par_selected.connect(self._on_par_selected)
         self._sidebar.par_refresh_requested.connect(self._on_par_refresh)
+        self._sidebar.load_requested.connect(self._on_load_requested)
         self._sidebar.scan_selected.connect(self._on_scan_selected)
         self._sidebar.manual_files_selected.connect(self._on_manual_files_selected)
         self._sidebar.files_applied.connect(self._on_files_applied)
@@ -264,6 +275,8 @@ class MainWindow(QMainWindow):
         self._sidebar.annotation_changed.connect(self._on_annotation_changed)
         self._sidebar.tags_visible_changed.connect(self._viewer.set_tags_visible)
         self._sidebar.tag_selected.connect(self._on_tag_selected)
+        self._sidebar.tag_edit_requested.connect(self._on_tag_edit_from_sidebar)
+        self._sidebar.tag_delete_requested.connect(self._on_tag_delete_from_sidebar)
         self._viewer.panel_tags_changed.connect(self._sidebar.update_tag_list)
 
         self._viewer.panel_closed.connect(self._on_panel_closed)
@@ -357,6 +370,11 @@ class MainWindow(QMainWindow):
                     return
         self._current_idx = 0
         self._sidebar.select_individual_silent(0)
+
+    def _on_load_requested(self, idx: int, file_types: list[str]):
+        self._session_types = list(file_types)
+        _settings.save({'checked_file_types': file_types})
+        self._on_individual_selected(idx)
 
     def _on_scan_selected(self, path: Path):
         self._clear_anchors_on_nav()
@@ -513,6 +531,9 @@ class MainWindow(QMainWindow):
                 if ft in cached:
                     data, lo, hi = cached[ft]
                     self._viewer.add_panel(ft, data, lo, hi)
+                    panel = next((p for p in self._viewer.panels if p.file_type == ft), None)
+                    if panel is not None:
+                        panel.viewer.set_turbo_step(self._turbo_step)
                     self._sidebar.set_file_loaded(ft, True)
                     path = resolve_file(ind, ft)
                     if path:
@@ -524,6 +545,7 @@ class MainWindow(QMainWindow):
             else:
                 self._sidebar.set_controls_enabled(True)
                 QTimer.singleShot(0, self._viewer.sync_all)
+                QTimer.singleShot(0, self._viewer.emit_active_panel_tags)
                 QTimer.singleShot(200, lambda: self._start_preload(idx))
                 self._maybe_restore_overlay()
 
@@ -583,6 +605,9 @@ class MainWindow(QMainWindow):
 
     def _on_file_loaded(self, ft: str, data: object, lo: float, hi: float):
         self._viewer.fill_panel(ft, data, lo, hi)
+        panel = next((p for p in self._viewer.panels if p.file_type == ft), None)
+        if panel is not None:
+            panel.viewer.set_turbo_step(self._turbo_step)
         self._sidebar.set_file_loaded(ft, True)
         if self._single_scan_mode:
             path = self._scan_resolved_paths.get(ft)
@@ -603,6 +628,7 @@ class MainWindow(QMainWindow):
         self._sidebar.set_controls_enabled(True)
         self._loader = None
         QTimer.singleShot(0, self._viewer.sync_all)
+        QTimer.singleShot(0, self._viewer.emit_active_panel_tags)
         if not self._single_scan_mode:
             QTimer.singleShot(200, lambda: self._start_preload(self._current_idx))
         self._check_dimension_mismatch()
@@ -872,9 +898,20 @@ class MainWindow(QMainWindow):
         if panel is None:
             return
         orientation = self._viewer.orientation
-        slice_idx = z if orientation == "XY" else (y if orientation == "XZ" else x)
-        panel.viewer.jump_to_slice(slice_idx)
+        s = self._turbo_step
+        vox_idx = z if orientation == "XY" else (y if orientation == "XZ" else x)
+        panel.viewer.jump_to_slice(vox_idx // s)
         panel.highlight_tag(tag_id)
+
+    def _on_tag_edit_from_sidebar(self, file_type: str, tag_id: str) -> None:
+        panel = next((p for p in self._viewer.panels if p.file_type == file_type), None)
+        if panel is not None:
+            panel.edit_tag(tag_id)
+
+    def _on_tag_delete_from_sidebar(self, file_type: str, tag_id: str) -> None:
+        panel = next((p for p in self._viewer.panels if p.file_type == file_type), None)
+        if panel is not None:
+            panel.delete_tag(tag_id)
 
     def _on_annotation_changed(self, ft: str, value: str) -> None:
         if self._current_idx < 0:

@@ -1,10 +1,10 @@
 from pathlib import Path
 
-from PyQt6.QtCore import QEasingCurve, QPoint, Qt, QTimer, QVariantAnimation, pyqtSignal
+from PyQt6.QtCore import QPoint, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QCursor
 from PyQt6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
-    QGridLayout, QHBoxLayout, QLabel, QListWidget, QPushButton,
+    QGridLayout, QHBoxLayout, QLabel, QListWidget, QMenu, QPushButton,
     QRadioButton, QScrollArea, QSlider, QVBoxLayout, QWidget,
 )
 
@@ -14,9 +14,7 @@ from ..par.parser import Individual
 from .annotations import BTN_TO_VALUE, VALUE_TO_BTN
 from .viewer_panel import _ColorSwatchPicker
 
-_TRIGGER_W = 26
-_PANEL_W   = 270
-_OPEN_W    = _TRIGGER_W + _PANEL_W
+_SIDEBAR_W = 280
 
 _TURBO_OFF_STYLE = (
     "QPushButton { background: #252525; color: #666; border: 1px solid #333;"
@@ -190,7 +188,7 @@ class _ManualFileSelectDialog(QDialog):
 
 
 class Sidebar(QWidget):
-    """Hover-activated overlay sidebar with four collapsible sections."""
+    """Resizable sidebar with four collapsible sections."""
 
     par_selected           = pyqtSignal(object)   # Path
     scan_selected          = pyqtSignal(object)   # Path
@@ -205,72 +203,36 @@ class Sidebar(QWidget):
     sync_toggled        = pyqtSignal(bool)
     turbo_changed       = pyqtSignal(int)   # emits stride: 1, 2, or 4
     individual_selected = pyqtSignal(int)
+    load_requested      = pyqtSignal(int, list)  # (idx, file_types) — new individual + files
     composite_requested     = pyqtSignal(list)   # list of (file_type, (r,g,b), opacity)
     composite_updated       = pyqtSignal(list)   # same format — live-update existing composite
     composite_blend_changed = pyqtSignal(str)    # "screen" or "alpha"
     annotation_changed      = pyqtSignal(str, str)  # (file_type, value: "Pass"/"Review"/"Fail"/"")
     tags_visible_changed    = pyqtSignal(bool)
     tag_selected            = pyqtSignal(str, int, int, int, str)  # (file_type, x, y, z, tag_id)
+    tag_edit_requested      = pyqtSignal(str, str)  # (file_type, tag_id)
+    tag_delete_requested    = pyqtSignal(str, str)  # (file_type, tag_id)
     par_refresh_requested   = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._individuals: list[Individual] = []
         self._current_idx = -1
+        self._loaded_idx  = -1
+        self._nav_triggered = False
         self._file_checks: dict[str, QCheckBox] = {}
         self._file_available: dict[str, bool] = {}
         self._annot_groups: dict[str, QButtonGroup] = {}
-        self._is_open      = False
-        self._pinned       = False  # True while a color dialog is open
-        self._dialog_grace = False  # True during the post-dialog grace period
 
         self._setup_ui()
-        self._setup_animation()
-        self._setup_hover()
-
-        self.setFixedWidth(_TRIGGER_W)
+        self.setMinimumWidth(0)
 
     # ── UI ────────────────────────────────────────────────────────────────────
 
     def _setup_ui(self):
-        row = QHBoxLayout(self)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(0)
+        self.setStyleSheet("background: #181818; border-right: 1px solid #2c2c2c;")
 
-        # ── Trigger strip ────────────────────────────────────────────────────
-        self._trigger = QWidget()
-        self._trigger.setFixedWidth(_TRIGGER_W)
-        self._trigger.setStyleSheet(
-            "QWidget { background: #0d1a10; border-right: 2px solid #147a3f; }"
-        )
-        self._trigger.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._trigger.setToolTip("Show panel")
-
-        icon = QLabel("☰")
-        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon.setStyleSheet(
-            "color: #2ce67f; font-size: 14px;"
-            " background: transparent; border: none;"
-        )
-        self._icon_lbl = icon
-        trig_col = QVBoxLayout(self._trigger)
-        trig_col.setContentsMargins(0, 0, 0, 0)
-        trig_col.addStretch()
-        trig_col.addWidget(icon)
-        trig_col.addStretch()
-        row.addWidget(self._trigger)
-
-        # ── Sliding panel ────────────────────────────────────────────────────
-        self._panel = QWidget()
-        self._panel.setMinimumWidth(0)
-        self._panel.setFixedWidth(0)
-        self._panel.setStyleSheet(
-            "background: #181818; border-right: 1px solid #2c2c2c;"
-        )
-        self._panel.hide()
-        row.addWidget(self._panel)
-
-        panel_col = QVBoxLayout(self._panel)
+        panel_col = QVBoxLayout(self)
         panel_col.setContentsMargins(0, 0, 0, 0)
         panel_col.setSpacing(0)
 
@@ -717,7 +679,7 @@ class Sidebar(QWidget):
         self._tag_list_col = QVBoxLayout(self._tag_list_content)
         self._tag_list_col.setContentsMargins(0, 2, 0, 2)
         self._tag_list_col.setSpacing(1)
-        self._tag_list_empty_lbl = QLabel("Activate Tag mode on a panel to see tags here")
+        self._tag_list_empty_lbl = QLabel("No tags placed yet")
         self._tag_list_empty_lbl.setWordWrap(True)
         self._tag_list_empty_lbl.setStyleSheet(
             "color: #555; font-size: 11px; padding: 4px 6px;"
@@ -748,15 +710,7 @@ class Sidebar(QWidget):
         btn_y     = color_btn.mapToGlobal(color_btn.rect().center()).y()
         dlg.move(sidebar_x, btn_y - dlg.height() // 2)
 
-        self._pinned = True
         dlg.exec()
-        self._pinned = False
-
-        if not self.rect().contains(self.mapFromGlobal(QCursor.pos())):
-            self._dialog_grace = True
-            self._poll.setInterval(500)
-            self._poll.start()
-
         color = dlg.chosen_color()
         if color is None:
             return
@@ -927,79 +881,12 @@ class Sidebar(QWidget):
 
         body.addWidget(foot)
 
-    # ── Animation ─────────────────────────────────────────────────────────────
-
-    def _setup_animation(self):
-        self._anim = QVariantAnimation(self)
-        self._anim.setDuration(160)
-        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self._anim.valueChanged.connect(self._on_anim_value)
-        self._anim.finished.connect(self._on_anim_done)
-
-    def _animate_to(self, target: int):
-        if target > _TRIGGER_W:
-            self._panel.show()
-            self._is_open = True
-        self._anim.stop()
-        self._anim.setStartValue(self.width())
-        self._anim.setEndValue(target)
-        self._anim.start()
-
-    def _on_anim_value(self, v):
-        w = int(v)
-        self.setFixedWidth(w)
-        self._panel.setFixedWidth(max(0, w - _TRIGGER_W))
-
-    def _on_anim_done(self):
-        if int(self._anim.endValue()) <= _TRIGGER_W:
-            self._panel.hide()
-            self._panel.setFixedWidth(0)
-            self._is_open = False
-
-    # ── Hover ─────────────────────────────────────────────────────────────────
-
-    def _setup_hover(self):
-        self._poll = QTimer(self)
-        self._poll.setInterval(80)
-        self._poll.timeout.connect(self._check_cursor)
-
-    def enterEvent(self, event):
-        self._poll.stop()
-        self._dialog_grace = False
-        self._poll.setInterval(80)
-        if not self._is_open:
-            self._animate_to(_OPEN_W)
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        if self._is_open and not self._pinned:
-            self._poll.start()
-        super().leaveEvent(event)
-
-    def _check_cursor(self):
-        if self._pinned:
-            return
-        if not self.rect().contains(self.mapFromGlobal(QCursor.pos())):
-            if self._dialog_grace:
-                # First check after dialog — forgive and reset to normal poll speed
-                self._dialog_grace = False
-                self._poll.setInterval(80)
-                return
-            self._animate_to(_TRIGGER_W)
-            self._poll.stop()
-
     # ── Public API ────────────────────────────────────────────────────────────
-
-    def open_now(self):
-        """Expand without animation — used on startup."""
-        self._panel.show()
-        self._panel.setFixedWidth(_PANEL_W)
-        self.setFixedWidth(_OPEN_W)
-        self._is_open = True
 
     def load_individuals(self, individuals: list[Individual]):
         self._individuals = individuals
         self._current_idx = -1
+        self._loaded_idx  = -1
         self._indiv_list.blockSignals(True)
         self._indiv_list.clear()
         for ind in individuals:
@@ -1020,6 +907,7 @@ class Sidebar(QWidget):
             self._indiv_list.setCurrentRow(idx)
             self._indiv_list.blockSignals(False)
             self._current_idx = idx
+            self._loaded_idx  = idx
             n = len(self._individuals)
             self._counter.setText(f"{idx + 1} / {n}")
             self._refresh_nav(idx)
@@ -1076,10 +964,7 @@ class Sidebar(QWidget):
                 item.widget().deleteLater()
 
         if not tags:
-            self._tag_list_empty_lbl = QLabel(
-                "No tags placed yet" if file_type else
-                "Activate Tag mode on a panel to see tags here"
-            )
+            self._tag_list_empty_lbl = QLabel("No tags placed yet")
             self._tag_list_empty_lbl.setWordWrap(True)
             self._tag_list_empty_lbl.setStyleSheet(
                 "color: #555; font-size: 11px; padding: 4px 6px;"
@@ -1103,6 +988,11 @@ class Sidebar(QWidget):
             btn.clicked.connect(
                 lambda _, t=tag, ft=file_type:
                     self.tag_selected.emit(ft, t.x, t.y, t.z, t.id)
+            )
+            btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            btn.customContextMenuRequested.connect(
+                lambda pos, t=tag, ft=file_type, b=btn:
+                    self._show_tag_context_menu(b.mapToGlobal(pos), ft, t.id)
             )
             self._tag_list_col.addWidget(btn)
         self._tag_list_col.addStretch()
@@ -1163,6 +1053,20 @@ class Sidebar(QWidget):
         self._anchor_set_btn.show()
         self.anchor_cancel_requested.emit()
 
+    def _show_tag_context_menu(self, global_pos, file_type: str, tag_id: str):
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            "QMenu { background: #1e1e1e; color: #ccc; border: 1px solid #444; }"
+            "QMenu::item:selected { background: #147a3f; }"
+        )
+        edit_act   = menu.addAction("Edit")
+        delete_act = menu.addAction("Delete")
+        action = menu.exec(global_pos)
+        if action == edit_act:
+            self.tag_edit_requested.emit(file_type, tag_id)
+        elif action == delete_act:
+            self.tag_delete_requested.emit(file_type, tag_id)
+
     def _update_file_count(self):
         n = sum(1 for cb in self._file_checks.values() if cb.isChecked())
         self._file_count_lbl.setText(f"{n} selected")
@@ -1191,47 +1095,32 @@ class Sidebar(QWidget):
 
     def _on_apply(self):
         selected = [ft for ft, cb in self._file_checks.items() if cb.isChecked()]
-        self.files_applied.emit(selected)
+        if self._current_idx != self._loaded_idx:
+            self._loaded_idx = self._current_idx
+            self.load_requested.emit(self._current_idx, selected)
+        else:
+            self.files_applied.emit(selected)
 
     def _browse_par(self):
-        self._pinned = True
         path, _ = QFileDialog.getOpenFileName(
             self, "Select PAR or CSV file", "",
             "PAR / CSV files (*.par *.csv);;All files (*)"
         )
-        self._pinned = False
-        if not self.rect().contains(self.mapFromGlobal(QCursor.pos())):
-            self._dialog_grace = True
-            self._poll.setInterval(500)
-            self._poll.start()
         if path:
             self.par_selected.emit(Path(path))
 
     def _browse_scan(self):
-        self._pinned = True
         path, _ = QFileDialog.getOpenFileName(
             self, "Select individual scan", "",
             "MHD files (*.mhd);;All files (*)"
         )
-        self._pinned = False
-        if not self.rect().contains(self.mapFromGlobal(QCursor.pos())):
-            self._dialog_grace = True
-            self._poll.setInterval(500)
-            self._poll.start()
         if path:
             self.scan_selected.emit(Path(path))
 
     def _browse_manual(self):
         file_types = self.checked_file_types() or list(FILE_TYPE_ORDER)
         dlg = _ManualFileSelectDialog(file_types, self)
-        self._pinned = True
-        result = dlg.exec()
-        self._pinned = False
-        if not self.rect().contains(self.mapFromGlobal(QCursor.pos())):
-            self._dialog_grace = True
-            self._poll.setInterval(500)
-            self._poll.start()
-        if result == QDialog.DialogCode.Accepted:
+        if dlg.exec() == QDialog.DialogCode.Accepted:
             paths = dlg.selected_paths
             if paths:
                 self.manual_files_selected.emit(paths)
@@ -1246,14 +1135,19 @@ class Sidebar(QWidget):
         n = len(self._individuals)
         self._counter.setText(f"{row + 1} / {n}")
         self._refresh_nav(row)
-        self.individual_selected.emit(row)
+        if self._nav_triggered or self._loaded_idx >= 0:
+            self._nav_triggered = False
+            self._loaded_idx = row
+            self.individual_selected.emit(row)
 
     def _go_prev(self):
         if self._current_idx > 0:
+            self._nav_triggered = True
             self._indiv_list.setCurrentRow(self._current_idx - 1)
 
     def _go_next(self):
         if self._current_idx < len(self._individuals) - 1:
+            self._nav_triggered = True
             self._indiv_list.setCurrentRow(self._current_idx + 1)
 
     def _refresh_nav(self, row: int):

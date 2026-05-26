@@ -203,6 +203,7 @@ class MultiViewer(QWidget):
             self._remove_panel(panel)
         self._anchors.clear()
         self._anchor_mode = False
+        self._last_active_panel = None
 
     # ── Selection mode ────────────────────────────────────────────────────────
 
@@ -481,11 +482,10 @@ class MultiViewer(QWidget):
         self.panel_tags_changed.emit(tags, ft)
 
     def _on_panel_clicked(self, panel):
-        if panel is not self._last_active_panel:
-            self._last_active_panel = panel
-            if hasattr(panel, "current_tags"):
-                tags, ft = panel.current_tags()
-                self.panel_tags_changed.emit(tags, ft)
+        self._last_active_panel = panel
+        if hasattr(panel, "current_tags"):
+            tags, ft = panel.current_tags()
+            self.panel_tags_changed.emit(tags, ft)
 
     def _on_cursor_left(self):
         src = self.sender()
