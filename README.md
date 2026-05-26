@@ -41,3 +41,7 @@ Requires [uv](https://docs.astral.sh/uv/getting-started/installation/).
 3. The finished app will be in `dist/MaskView/` — run `MaskView.exe` inside that folder
 
 The `dist/MaskView/` folder is self-contained and can be copied anywhere or shared with users who don't have Python installed.
+
+## TODO
+- Support custom directory structures
+- Additional UI themes
