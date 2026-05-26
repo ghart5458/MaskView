@@ -327,7 +327,8 @@ class MultiViewer(QWidget):
             panel.tags_changed.connect(
                 lambda tags, ft, p=panel: self._on_tags_changed(p, tags, ft)
             )
-        v.view_clicked.connect(lambda p=panel: self._on_panel_clicked(p))
+        if hasattr(v, 'view_clicked'):
+            v.view_clicked.connect(lambda p=panel: self._on_panel_clicked(p))
         if hasattr(panel, "drag_started"):
             panel.drag_started.connect(lambda p=panel: self._on_drag_started(p))
         if hasattr(panel, "anchor_confirmed"):
