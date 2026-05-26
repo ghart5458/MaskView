@@ -36,9 +36,12 @@ Requires [uv](https://docs.astral.sh/uv/getting-started/installation/).
 2. Open a terminal in the project folder and run:
    ```
    uv sync
+   .venv\Scripts\activate
    pyinstaller MaskView.spec
    ```
 3. The finished app will be in `dist/MaskView/` — run `MaskView.exe` inside that folder
+
+> **Note:** The `.venv\Scripts\activate` step activates the virtual environment created by `uv sync`. PyInstaller must run inside the venv so it can find all dependencies.
 
 The `dist/MaskView/` folder is self-contained and can be copied anywhere or shared with users who don't have Python installed.
 
