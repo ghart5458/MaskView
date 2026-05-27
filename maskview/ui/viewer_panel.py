@@ -1,5 +1,5 @@
 from PyQt6.QtCore import QEvent, QObject, QTimer, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QCursor, QPainter, QPen
+from PyQt6.QtGui import QColor, QCursor, QLinearGradient, QPainter, QPen
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -199,6 +199,22 @@ class _HistogramOverlay(QFrame):
 
 # ── Color swatch picker ───────────────────────────────────────────────────────
 
+class _GrayscaleBtn(QPushButton):
+    """Button with a black-to-~75%-gray gradient background and solid white text."""
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        r = self.rect()
+        grad = QLinearGradient(0, 0, r.width(), 0)
+        grad.setColorAt(0.0, QColor(0, 0, 0))
+        grad.setColorAt(1.0, QColor(191, 191, 191))
+        p.fillRect(r, grad)
+        p.setPen(QColor(85, 85, 85))
+        p.drawRect(r.adjusted(0, 0, -1, -1))
+        p.setPen(QColor(255, 255, 255))
+        p.drawText(r, Qt.AlignmentFlag.AlignCenter, self.text())
+
+
 class _ColorSwatchPicker(QDialog):
     """Frameless grid of preset color swatches — click one to select and close."""
 
@@ -232,6 +248,11 @@ class _ColorSwatchPicker(QDialog):
             c = QColor(hex_color)
             btn.clicked.connect(lambda _, color=c: self._select(color))
             grid.addWidget(btn, row, col)
+        n_rows = len(self._SWATCHES) // self._COLS
+        gray_btn = _GrayscaleBtn("Use grayscale")
+        gray_btn.setFixedHeight(22)
+        gray_btn.clicked.connect(lambda: self._select(QColor(255, 255, 255)))
+        grid.addWidget(gray_btn, n_rows, 0, 1, self._COLS)
         self.adjustSize()
 
     def chosen_color(self) -> QColor | None:
