@@ -1021,8 +1021,7 @@ class Sidebar(QWidget):
             return
 
         for i, tag in enumerate(tags):
-            preview = tag.note[:20] + "…" if len(tag.note) > 20 else (tag.note or "—")
-            btn = QPushButton(f"#{i + 1}  {preview}")
+            btn = QPushButton(f"#{i + 1}  {tag.note or '—'}")
             btn.setFixedHeight(22)
             coord_tip = f"({tag.x}, {tag.y}, {tag.z})"
             btn.setToolTip(f"{coord_tip}\n{tag.note}" if tag.note else coord_tip)

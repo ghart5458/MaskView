@@ -316,6 +316,7 @@ class MainWindow(QMainWindow):
 
         self._annot_mgr = AnnotationManager()
 
+        self.setAcceptDrops(True)
         self._setup_ui()
 
     def _setup_ui(self):
@@ -393,6 +394,28 @@ class MainWindow(QMainWindow):
             if content:
                 overlay.setGeometry(content.rect())
 
+    _DROP_SUFFIXES = {'.par', '.csv', '.mhd'}
+
+    def dragEnterEvent(self, event):
+        urls = event.mimeData().urls()
+        if urls and all(
+            Path(u.toLocalFile()).suffix.lower() in self._DROP_SUFFIXES
+            for u in urls
+            if u.isLocalFile()
+        ):
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        urls = [u for u in event.mimeData().urls() if u.isLocalFile()]
+        if not urls:
+            return
+        path = Path(urls[0].toLocalFile())
+        suffix = path.suffix.lower()
+        if suffix in ('.par', '.csv'):
+            self._on_par_selected(path)
+        elif suffix == '.mhd':
+            self._on_scan_selected(path)
+
     def _maybe_show_session_restore(self):
         saved = _settings.load()
         last_par = saved.get('last_par_file')
@@ -426,6 +449,8 @@ class MainWindow(QMainWindow):
             self._sidebar.select_individual_silent(idx)
             self._current_idx = idx
         ind = self._individuals[idx]
+        # _on_par_selected resets last_individual_idx to 0; write the real value back.
+        _settings.save({'last_individual_idx': idx, 'last_individual_name': ind.oldname})
         available = {ft: (resolve_file(ind, ft) is not None) for ft in FILE_TYPE_ORDER}
         to_load = [ft for ft in self._session_types if available.get(ft)]
         self._sidebar.update_file_availability(available, set(to_load))
