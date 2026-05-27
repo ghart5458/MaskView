@@ -258,6 +258,7 @@ class _SessionRestoreOverlay(QWidget):
 
         self._card.adjustSize()
         self._center_card()
+        self.grabKeyboard()
 
     def _center_card(self):
         self._card.adjustSize()
@@ -271,8 +272,15 @@ class _SessionRestoreOverlay(QWidget):
         self._dismiss()
 
     def _dismiss(self):
+        self.releaseKeyboard()
         self.dismissed.emit()
         self.setParent(None)
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self._on_resume()
+        else:
+            super().keyPressEvent(event)
 
     def mousePressEvent(self, event):
         if not self._card.geometry().contains(event.pos()):
