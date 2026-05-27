@@ -3,7 +3,7 @@ from pathlib import Path
 from PyQt6.QtCore import QEvent, QObject, QPoint, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QCursor
 from PyQt6.QtWidgets import (
-    QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
+    QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
     QGridLayout, QHBoxLayout, QLabel, QListWidget, QMenu, QPushButton,
     QRadioButton, QScrollArea, QSlider, QVBoxLayout, QWidget,
 )
@@ -20,18 +20,39 @@ _SIDEBAR_W = 280
 class _WheelIsolator(QObject):
     """Installed on a scroll widget's viewport; consumes wheel events so they
     never escape to the outer sidebar scroll area when the widget hits its limit.
-    Forwards the event directly to the scrollbar so Qt handles trackpad pixel-delta
-    and mouse-wheel sensitivity natively, then returns True to stop propagation."""
+
+    Sets the scrollbar value directly (never via sendEvent, which re-propagates
+    when the bar is at its limit). Uses pixelDelta for trackpad precision with a
+    fractional accumulator, falls back to angleDelta for mouse wheels."""
 
     def __init__(self, widget):
         super().__init__(widget)          # QObject child → kept alive with the widget
-        self._bar = widget.verticalScrollBar()
+        self._bar   = widget.verticalScrollBar()
+        self._accum = 0.0
         widget.viewport().installEventFilter(self)
 
     def eventFilter(self, obj, event):
         if event.type() == QEvent.Type.Wheel:
-            QApplication.sendEvent(self._bar, event)
-            return True   # event consumed; parent scroll area never sees it
+            bar = self._bar
+            py  = event.pixelDelta().y()
+            if py != 0:
+                # Trackpad sends pixel-precise deltas. Convert to scrollbar units
+                # using pageStep/viewport-height so this works for both QScrollArea
+                # (value = pixels, pageStep ≈ viewport height → scale ≈ 1) and
+                # QListWidget (value = items, pageStep = visible items → scale =
+                # 1/item_height), without needing to know the widget type.
+                scale = max(bar.pageStep(), 1) / max(obj.height(), 1)
+                self._accum += py * scale
+                step = int(self._accum)
+                if step:
+                    bar.setValue(bar.value() - step)
+                    self._accum -= step
+            else:
+                dy = event.angleDelta().y()
+                if dy:
+                    bar.setValue(bar.value() - (bar.singleStep() if dy > 0 else -bar.singleStep()))
+                self._accum = 0.0
+            return True   # always consumed — parent scroll area never sees it
         return False
 
 
@@ -873,6 +894,11 @@ class Sidebar(QWidget):
                 background: #3a3a3a; border-radius: 3px; min-height: 16px;
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+            QScrollBar:horizontal { background: #181818; height: 8px; border: none; }
+            QScrollBar::handle:horizontal {
+                background: #3a3a3a; border-radius: 3px; min-width: 16px;
+            }
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
         """)
         self._indiv_list.currentRowChanged.connect(self._on_row_changed)
         _WheelIsolator(self._indiv_list)

@@ -127,7 +127,7 @@ class _PreloaderThread(QThread):
                 self.chunk_ready.emit(self._idx, ft, data, lo, hi)
             except Exception:
                 pass
-            self.msleep(80)
+            self.msleep(200)
 
 
 # ── Composite channel loader ──────────────────────────────────────────────────
@@ -298,7 +298,7 @@ class MainWindow(QMainWindow):
         self._saved_turbo_stride: int  = _saved.get('turbo_stride', 1)
         self._loading = False
         self._loader: _LoaderThread | None = None
-        self._turbo_step = 1
+        self._turbo_step = self._saved_turbo_stride
 
         self._single_scan_mode    = False
         self._scan_base_path: Path | None = None
@@ -638,8 +638,11 @@ class MainWindow(QMainWindow):
         self._refresh_annotations([])
         self._update_composite_channels()
         self._sidebar.update_tag_list([], "")
+        self._loader_resolved = dict(file_paths)  # paths already resolved
         for ft in file_paths:
             self._viewer.add_empty_panel(ft)
+        self._refresh_annotations(self._panel_fts_for_annotations())
+        self._update_composite_channels()
         self._loading = True
         self._sidebar.set_controls_enabled(False)
         self._loader = _DirectLoaderThread(file_paths, self._turbo_step)
@@ -729,8 +732,13 @@ class MainWindow(QMainWindow):
     def _launch_loader(self, ind: Individual, file_types: list[str]):
         if not file_types:
             return
+        # Resolve paths now, before I/O starts, so _on_file_loaded never calls
+        # resolve_file() on the main thread while the disk is busy loading.
+        self._loader_resolved = {ft: resolve_file(ind, ft) for ft in file_types}
         for ft in file_types:
             self._viewer.add_empty_panel(ft)
+        self._refresh_annotations(self._panel_fts_for_annotations())
+        self._update_composite_channels()
         self._loading = True
         self._sidebar.set_controls_enabled(False)
         self._loader = _LoaderThread(ind, file_types, self._turbo_step)
@@ -753,16 +761,10 @@ class MainWindow(QMainWindow):
         if panel is not None:
             panel.viewer.set_turbo_step(self._turbo_step)
         self._sidebar.set_file_loaded(ft, True)
-        if self._single_scan_mode:
-            path = self._scan_resolved_paths.get(ft)
-        elif 0 <= self._current_idx < len(self._individuals):
-            path = resolve_file(self._individuals[self._current_idx], ft)
-        else:
-            path = None
+        # Use paths pre-resolved before loading started — no filesystem calls here.
+        path = getattr(self, '_loader_resolved', {}).get(ft)
         if path:
             self._viewer.set_panel_filename(ft, path)
-        self._refresh_annotations(self._panel_fts_for_annotations())
-        self._update_composite_channels()
 
     def _on_file_failed(self, ft: str, _msg: str):
         self._viewer.close_panel(ft)
@@ -777,6 +779,8 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(200, lambda: self._start_preload(self._current_idx))
         self._check_dimension_mismatch()
         self._maybe_restore_overlay()
+        self._refresh_annotations(self._panel_fts_for_annotations())
+        self._update_composite_channels()
         if self._deferred_composite is not None:
             specs = self._deferred_composite
             self._deferred_composite = None
@@ -800,7 +804,7 @@ class MainWindow(QMainWindow):
                 continue
             loader = _PreloaderThread(i, ind, to_load, self._turbo_step)
             loader.chunk_ready.connect(self._on_preload_chunk)
-            loader.start()
+            loader.start(QThread.Priority.LowPriority)
             self._preloaders.append(loader)
 
     def _cancel_preloaders(self):
