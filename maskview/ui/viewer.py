@@ -447,6 +447,7 @@ class _PanZoomView(QGraphicsView):
             self._is_panning = False
             event.accept()
         elif event.button() == Qt.MouseButton.RightButton:
+            self.view_clicked.emit()
             self._apply_zoom(-1, event.pos())
             event.accept()
         else:

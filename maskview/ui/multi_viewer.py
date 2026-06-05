@@ -337,10 +337,15 @@ class MultiViewer(QWidget):
             panel.anchor_cleared.connect(self._on_anchor_cleared)
 
     def _on_slice_changed(self, z: int):
-        if not self._sync_enabled or self._anchor_mode:
-            return
         src = self.sender()
         src_panel = next((p for p in self._panels if p.viewer is src), None)
+        if src_panel is not None:
+            self._last_active_panel = src_panel
+            if hasattr(src_panel, "current_tags"):
+                tags, ft = src_panel.current_tags()
+                self.panel_tags_changed.emit(tags, ft)
+        if not self._sync_enabled or self._anchor_mode:
+            return
         if self._anchors and src_panel is not None:
             src_ft = src_panel.file_type
             if src_ft not in self._anchors:
