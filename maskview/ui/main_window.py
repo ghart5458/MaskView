@@ -321,6 +321,10 @@ class MainWindow(QMainWindow):
         self._preloaders: list[_PreloaderThread] = []
         self._zombie_preloaders: list[_PreloaderThread] = []
 
+        self._cache_cleanup_timer = QTimer(self)
+        self._cache_cleanup_timer.setSingleShot(True)
+        self._cache_cleanup_timer.timeout.connect(self._cleanup_stale_cache)
+
         self._overlay_cache: dict[int, OverlaySpec] = {}
         self._composite_loader: _CompositeLoaderThread | None = None
         self._pending_spec: OverlaySpec | None = None
@@ -498,6 +502,7 @@ class MainWindow(QMainWindow):
         self._preload_cache.clear()
         self._preload_complete.clear()
         self._prev_idx = None
+        self._cache_cleanup_timer.stop()
         _settings.save({'turbo_stride': step})
 
     def _on_par_selected(self, path: Path):
@@ -506,6 +511,7 @@ class MainWindow(QMainWindow):
         self._preload_cache.clear()
         self._preload_complete.clear()
         self._prev_idx = None
+        self._cache_cleanup_timer.stop()
         self._single_scan_mode = False
         self._par_path = path
         _settings.save({'last_par_file': str(path), 'last_individual_idx': 0, 'last_individual_name': ''})
@@ -537,6 +543,7 @@ class MainWindow(QMainWindow):
         self._preload_cache.clear()
         self._preload_complete.clear()
         self._prev_idx = None
+        self._cache_cleanup_timer.stop()
         self._individuals = parse_file(self._par_path)
         self._annot_mgr.load(
             self._par_path,
@@ -567,6 +574,7 @@ class MainWindow(QMainWindow):
         self._preload_cache.clear()
         self._preload_complete.clear()
         self._prev_idx = None
+        self._cache_cleanup_timer.stop()
         self._single_scan_mode = True
         self._par_path = None
 
@@ -645,6 +653,7 @@ class MainWindow(QMainWindow):
         self._preload_cache.clear()
         self._preload_complete.clear()
         self._prev_idx = None
+        self._cache_cleanup_timer.stop()
         self._single_scan_mode = True
         self._par_path = None
 
@@ -741,6 +750,7 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(0, self._viewer.sync_all)
                 QTimer.singleShot(0, self._viewer.emit_active_panel_tags)
                 QTimer.singleShot(200, lambda: self._start_preload(idx))
+                self._cache_cleanup_timer.start(6000)
                 self._maybe_restore_overlay()
 
             self._refresh_annotations(self._panel_fts_for_annotations())
@@ -768,6 +778,7 @@ class MainWindow(QMainWindow):
             if candidates:
                 farthest = max(candidates, key=lambda k: abs(k - next_idx))
                 del self._preload_cache[farthest]
+        self._refresh_preload_indicators()
 
     # ── Loading ───────────────────────────────────────────────────────────────
 
@@ -831,6 +842,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._viewer.emit_active_panel_tags)
         if not self._single_scan_mode:
             QTimer.singleShot(200, lambda: self._start_preload(self._current_idx))
+        self._cache_cleanup_timer.start(6000)
         self._check_dimension_mismatch()
         self._maybe_restore_overlay()
         self._refresh_annotations(self._panel_fts_for_annotations())
@@ -842,6 +854,21 @@ class MainWindow(QMainWindow):
             self._on_composite_requested(specs)
 
     # ── Pre-loading ───────────────────────────────────────────────────────────
+
+    def _cleanup_stale_cache(self):
+        """Evict cache entries outside the current preload range (except prev_idx).
+
+        Called 6 seconds after settling on an individual, giving a grace period
+        for misclicks before stale green indicators are removed.
+        """
+        lo = self._current_idx - _PRELOAD_BEHIND
+        hi = self._current_idx + _PRELOAD_AHEAD
+        stale = [k for k in list(self._preload_cache)
+                 if k != self._prev_idx and not (lo <= k <= hi)]
+        for k in stale:
+            del self._preload_cache[k]
+        if stale:
+            self._refresh_preload_indicators()
 
     def _start_preload(self, current_idx: int):
         self._cancel_preloaders()
@@ -931,6 +958,7 @@ class MainWindow(QMainWindow):
         self._preload_cache.clear()
         self._preload_complete.clear()
         self._prev_idx = None
+        self._cache_cleanup_timer.stop()
         self._cancel_loader()
 
         for panel in list(self._viewer.panels):
