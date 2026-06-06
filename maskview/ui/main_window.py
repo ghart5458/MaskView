@@ -22,8 +22,8 @@ from .notifications import NotifManager
 from .sidebar import Sidebar
 
 _DEFAULT_FILE_TYPES = ["original", "maskseg"]
-_PRELOAD_AHEAD      = 2
-_PRELOAD_BEHIND     = 1
+_PRELOAD_AHEAD      = 3
+_PRELOAD_BEHIND     = 0
 
 
 # ── RAM helpers ───────────────────────────────────────────────────────────────
@@ -100,6 +100,7 @@ class _LoaderThread(QThread):
 
 class _PreloaderThread(QThread):
     chunk_ready = pyqtSignal(int, str, object, float, float)
+    all_done    = pyqtSignal()
 
     def __init__(self, ind_idx: int, ind: Individual, file_types: list[str],
                  turbo_step: int = 1, parent=None):
@@ -128,6 +129,7 @@ class _PreloaderThread(QThread):
             except Exception:
                 pass
             self.msleep(200)
+        self.all_done.emit()
 
 
 # ── Composite channel loader ──────────────────────────────────────────────────
@@ -313,6 +315,9 @@ class MainWindow(QMainWindow):
         self._scan_resolved_paths: dict   = {}
 
         self._preload_cache: dict[int, dict[str, tuple]] = {}
+        self._preload_complete: set[int] = set()
+        self._prev_idx: int | None = None
+        self._preload_queue: list[int] = []
         self._preloaders: list[_PreloaderThread] = []
         self._zombie_preloaders: list[_PreloaderThread] = []
 
@@ -491,12 +496,16 @@ class MainWindow(QMainWindow):
         self._turbo_step = step
         self._cancel_preloaders()
         self._preload_cache.clear()
+        self._preload_complete.clear()
+        self._prev_idx = None
         _settings.save({'turbo_stride': step})
 
     def _on_par_selected(self, path: Path):
         self._clear_anchors_on_nav()
         self._cancel_preloaders()
         self._preload_cache.clear()
+        self._preload_complete.clear()
+        self._prev_idx = None
         self._single_scan_mode = False
         self._par_path = path
         _settings.save({'last_par_file': str(path), 'last_individual_idx': 0, 'last_individual_name': ''})
@@ -526,6 +535,8 @@ class MainWindow(QMainWindow):
         )
         self._cancel_preloaders()
         self._preload_cache.clear()
+        self._preload_complete.clear()
+        self._prev_idx = None
         self._individuals = parse_file(self._par_path)
         self._annot_mgr.load(
             self._par_path,
@@ -554,6 +565,8 @@ class MainWindow(QMainWindow):
         self._clear_anchors_on_nav()
         self._cancel_preloaders()
         self._preload_cache.clear()
+        self._preload_complete.clear()
+        self._prev_idx = None
         self._single_scan_mode = True
         self._par_path = None
 
@@ -630,6 +643,8 @@ class MainWindow(QMainWindow):
         self._clear_anchors_on_nav()
         self._cancel_preloaders()
         self._preload_cache.clear()
+        self._preload_complete.clear()
+        self._prev_idx = None
         self._single_scan_mode = True
         self._par_path = None
 
@@ -745,10 +760,14 @@ class MainWindow(QMainWindow):
         if not entry:
             return
         self._preload_cache[cur] = entry
+        self._preload_complete.add(cur)
+        self._prev_idx = cur
         max_cached = _PRELOAD_AHEAD + _PRELOAD_BEHIND + 1
         if len(self._preload_cache) > max_cached:
-            farthest = max(self._preload_cache, key=lambda k: abs(k - next_idx))
-            del self._preload_cache[farthest]
+            candidates = [k for k in self._preload_cache if k != self._prev_idx]
+            if candidates:
+                farthest = max(candidates, key=lambda k: abs(k - next_idx))
+                del self._preload_cache[farthest]
 
     # ── Loading ───────────────────────────────────────────────────────────────
 
@@ -779,6 +798,7 @@ class MainWindow(QMainWindow):
         self._loader.file_failed.connect(self._on_file_failed)
         self._loader.all_done.connect(self._on_load_done)
         self._loader.start()
+        self._refresh_preload_indicators()
 
     def _cancel_loader(self):
         if self._loader is not None:
@@ -806,6 +826,7 @@ class MainWindow(QMainWindow):
         self._loading = False
         self._sidebar.set_controls_enabled(True)
         self._loader = None
+        self._refresh_preload_indicators()
         QTimer.singleShot(0, self._viewer.sync_all)
         QTimer.singleShot(0, self._viewer.emit_active_panel_tags)
         if not self._single_scan_mode:
@@ -827,20 +848,40 @@ class MainWindow(QMainWindow):
         n = len(self._individuals)
         forward  = range(current_idx + 1, min(current_idx + _PRELOAD_AHEAD + 1, n))
         backward = range(max(0, current_idx - _PRELOAD_BEHIND), current_idx)
-        for i in list(forward) + list(backward):
-            if i in self._preload_cache:
+        self._preload_queue = [i for i in list(forward) + list(backward)
+                               if i not in self._preload_cache]
+        self._start_next_preload()
+
+    def _start_next_preload(self):
+        if any(p.isRunning() for p in self._preloaders):
+            return  # one preloader at a time
+        while self._preload_queue:
+            idx = self._preload_queue.pop(0)
+            if idx in self._preload_cache:
                 continue
-            ind = self._individuals[i]
-            to_load = [ft for ft in self._session_types
-                       if resolve_file(ind, ft) is not None]
-            if not to_load:
-                continue
-            loader = _PreloaderThread(i, ind, to_load, self._turbo_step)
+            ind = self._individuals[idx]
+            loader = _PreloaderThread(idx, ind, self._session_types, self._turbo_step)
             loader.chunk_ready.connect(self._on_preload_chunk)
             loader.start(QThread.Priority.LowPriority)
             self._preloaders.append(loader)
+            self._refresh_preload_indicators()
+            QTimer.singleShot(100, self._poll_preloaders)
+            return
+
+    def _poll_preloaders(self):
+        finished = [p for p in self._preloaders if not p.isRunning()]
+        for loader in finished:
+            self._preloaders.remove(loader)
+            self._zombie_preloaders.append(loader)
+            self._preload_complete.add(loader._idx)
+        if finished:
+            self._refresh_preload_indicators()
+            self._start_next_preload()
+        elif self._preloaders:
+            QTimer.singleShot(100, self._poll_preloaders)
 
     def _cancel_preloaders(self):
+        self._preload_queue = []
         self._zombie_preloaders = [l for l in self._zombie_preloaders if l.isRunning()]
         for loader in self._preloaders:
             try:
@@ -850,6 +891,7 @@ class MainWindow(QMainWindow):
             loader.stop()
         self._zombie_preloaders.extend(self._preloaders)
         self._preloaders.clear()
+        self._refresh_preload_indicators()
 
     def _on_preload_chunk(self, idx: int, ft: str, data: object, lo: float, hi: float):
         if idx not in self._preload_cache:
@@ -857,8 +899,26 @@ class MainWindow(QMainWindow):
         self._preload_cache[idx][ft] = (data, lo, hi)
         max_cached = _PRELOAD_AHEAD + _PRELOAD_BEHIND + 1
         if len(self._preload_cache) > max_cached:
-            farthest = max(self._preload_cache, key=lambda k: abs(k - self._current_idx))
-            del self._preload_cache[farthest]
+            candidates = [k for k in self._preload_cache
+                          if k != self._prev_idx and k != idx]
+            if candidates:
+                farthest = max(candidates, key=lambda k: abs(k - self._current_idx))
+                del self._preload_cache[farthest]
+            elif self._prev_idx in self._preload_cache and self._prev_idx != idx:
+                del self._preload_cache[self._prev_idx]
+        self._refresh_preload_indicators()
+
+    def _refresh_preload_indicators(self):
+        # Green only for fully-loaded individuals (thread finished), not just
+        # any individual with a partial cache entry (first file arrived).
+        cached  = self._preload_complete & set(self._preload_cache.keys())
+        loading = {p._idx for p in self._preloaders if p.isRunning()}
+        if self._current_idx >= 0:
+            if self._loader is not None and self._loader.isRunning():
+                loading.add(self._current_idx)
+            elif not self._loading:
+                cached.add(self._current_idx)
+        self._sidebar.update_preload_indicators(cached, loading)
 
     # ── File selection ────────────────────────────────────────────────────────
 
@@ -869,6 +929,8 @@ class MainWindow(QMainWindow):
         _settings.save({'checked_file_types': file_types})
         self._cancel_preloaders()
         self._preload_cache.clear()
+        self._preload_complete.clear()
+        self._prev_idx = None
         self._cancel_loader()
 
         for panel in list(self._viewer.panels):

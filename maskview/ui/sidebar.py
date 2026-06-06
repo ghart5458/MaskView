@@ -1,11 +1,11 @@
 from pathlib import Path
 
 from PyQt6.QtCore import QEvent, QObject, QPoint, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QCursor
+from PyQt6.QtGui import QColor, QCursor, QPainter
 from PyQt6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
     QGridLayout, QHBoxLayout, QLabel, QListWidget, QMenu, QPushButton,
-    QRadioButton, QScrollArea, QSlider, QVBoxLayout, QWidget,
+    QRadioButton, QScrollArea, QSlider, QStyledItemDelegate, QVBoxLayout, QWidget,
 )
 
 from .. import settings as _settings
@@ -225,6 +225,37 @@ class _ManualFileSelectDialog(QDialog):
     @property
     def selected_paths(self) -> dict:
         return dict(self._paths)
+
+
+_DOT_ROLE = Qt.ItemDataRole.UserRole + 1
+
+_DOT_COLORS = {
+    'cached':  QColor('#1aad5e'),
+    'loading': QColor('#c8b84a'),
+}
+
+
+class _PreloadDotDelegate(QStyledItemDelegate):
+    """Draws a small status dot flush to the right edge of each list item."""
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+        status = index.data(_DOT_ROLE)
+        color = _DOT_COLORS.get(status)
+        if color is None:
+            return
+        r = option.rect
+        d = 6
+        x = r.right() - d - 5
+        y = r.top() + (r.height() - d) // 2
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(255, 255, 255, 200))
+        painter.drawEllipse(x - 1, y - 1, d + 2, d + 2)
+        painter.setBrush(color)
+        painter.drawEllipse(x, y, d, d)
+        painter.restore()
 
 
 class Sidebar(QWidget):
@@ -900,6 +931,7 @@ class Sidebar(QWidget):
             }
             QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
         """)
+        self._indiv_list.setItemDelegate(_PreloadDotDelegate(self._indiv_list))
         self._indiv_list.currentRowChanged.connect(self._on_row_changed)
         _WheelIsolator(self._indiv_list)
         body.addWidget(self._indiv_list)
@@ -942,6 +974,18 @@ class Sidebar(QWidget):
         self._counter.setText("— / —")
         self._refresh_nav(-1)
         self._apply_btn.setEnabled(False)
+
+    def update_preload_indicators(self, cached: set, loading: set):
+        for i in range(self._indiv_list.count()):
+            item = self._indiv_list.item(i)
+            if item is None:
+                continue
+            if i in cached:
+                item.setData(_DOT_ROLE, 'cached')
+            elif i in loading:
+                item.setData(_DOT_ROLE, 'loading')
+            else:
+                item.setData(_DOT_ROLE, None)
 
     def select_individual(self, idx: int):
         if 0 <= idx < len(self._individuals):
