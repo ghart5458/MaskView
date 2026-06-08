@@ -7,7 +7,8 @@ from PyQt6.QtCore import QThread, QTimer, pyqtSignal
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import (
-    QHBoxLayout, QLabel, QMainWindow, QPushButton, QSplitter, QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton,
+    QSplitter, QVBoxLayout, QWidget,
 )
 
 from .. import settings as _settings
@@ -390,6 +391,9 @@ class MainWindow(QMainWindow):
         self._sidebar.tag_selected.connect(self._on_tag_selected)
         self._sidebar.tag_edit_requested.connect(self._on_tag_edit_from_sidebar)
         self._sidebar.tag_delete_requested.connect(self._on_tag_delete_from_sidebar)
+        self._sidebar.tags_delete_many_requested.connect(self._on_tags_delete_many)
+        self._sidebar.tags_clear_requested.connect(self._on_tags_clear)
+        self._sidebar.tags_clear_all_requested.connect(self._on_tags_clear_all)
         self._viewer.panel_tags_changed.connect(self._sidebar.update_tag_list)
 
         self._viewer.panel_closed.connect(self._on_panel_closed)
@@ -1203,6 +1207,45 @@ class MainWindow(QMainWindow):
         panel = next((p for p in self._viewer.panels if p.file_type == file_type), None)
         if panel is not None:
             panel.delete_tag(tag_id)
+
+    def _on_tags_delete_many(self, file_type: str, tag_ids: list) -> None:
+        panel = next((p for p in self._viewer.panels if p.file_type == file_type), None)
+        if panel is not None:
+            panel.delete_tags(tag_ids)
+
+    def _on_tags_clear(self, file_type: str) -> None:
+        panel = next((p for p in self._viewer.panels if p.file_type == file_type), None)
+        if panel is not None:
+            panel.clear_tags()
+
+    def _on_tags_clear_all(self) -> None:
+        if not self._individuals:
+            return
+        reply = QMessageBox.question(
+            self,
+            "Clear all tags",
+            "This will permanently delete all tags for every individual and file type.\n\nContinue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        for panel in self._viewer.panels:
+            panel.clear_tags()
+        deleted = 0
+        for ind in self._individuals:
+            for ft in FILE_TYPE_ORDER:
+                vol_path = resolve_file(ind, ft)
+                if vol_path is None:
+                    continue
+                json_path = vol_path.with_name(vol_path.stem + "_MV_tags.json")
+                if json_path.exists():
+                    try:
+                        json_path.unlink()
+                        deleted += 1
+                    except Exception:
+                        pass
+        self._notifs.show("Tags cleared", f"Removed tags from {deleted} file(s)", "info")
 
     def _on_annotation_changed(self, ft: str, value: str) -> None:
         if self._current_idx < 0:

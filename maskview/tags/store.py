@@ -49,6 +49,10 @@ class TagStore:
             return True
         return False
 
+    def clear(self) -> None:
+        self._tags.clear()
+        self._save()
+
     def _load(self):
         if self._json_path.exists():
             try:

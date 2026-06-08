@@ -1240,6 +1240,21 @@ class ViewerPanel(QWidget):
         self._viewer.set_tags(self._tag_store.tags)
         self.tags_changed.emit(self._tag_store.tags, self._file_type)
 
+    def delete_tags(self, tag_ids: list[str]) -> None:
+        if self._tag_store is None:
+            return
+        for tag_id in tag_ids:
+            self._tag_store.remove(tag_id)
+        self._viewer.set_tags(self._tag_store.tags)
+        self.tags_changed.emit(self._tag_store.tags, self._file_type)
+
+    def clear_tags(self) -> None:
+        if self._tag_store is None:
+            return
+        self._tag_store.clear()
+        self._viewer.set_tags(self._tag_store.tags)
+        self.tags_changed.emit(self._tag_store.tags, self._file_type)
+
     def set_swap_highlight(self, active: bool):
         style = ("#titleBar { background: #2d2d2d; border: 2px solid #2ce67f; }"
                  if active else

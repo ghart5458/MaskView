@@ -3,10 +3,10 @@ from pathlib import Path
 from PyQt6.QtCore import QEvent, QObject, QPoint, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QCursor, QPainter
 from PyQt6.QtWidgets import (
-    QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
-    QGridLayout, QHBoxLayout, QLabel, QListWidget, QMenu, QPlainTextEdit,
-    QPushButton, QRadioButton, QScrollArea, QSlider, QStyledItemDelegate,
-    QVBoxLayout, QWidget,
+    QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog,
+    QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QListWidget,
+    QListWidgetItem, QMenu, QPlainTextEdit, QPushButton, QRadioButton,
+    QScrollArea, QSlider, QStyledItemDelegate, QVBoxLayout, QWidget,
 )
 
 from .. import settings as _settings
@@ -282,10 +282,13 @@ class Sidebar(QWidget):
     annotation_changed      = pyqtSignal(str, str)  # (file_type, value: "Pass"/"Review"/"Fail"/"")
     annotation_note_changed = pyqtSignal(str)        # note text for current individual
     export_tags_requested   = pyqtSignal()
-    tags_visible_changed    = pyqtSignal(bool)
-    tag_selected            = pyqtSignal(str, int, int, int, str)  # (file_type, x, y, z, tag_id)
-    tag_edit_requested      = pyqtSignal(str, str)  # (file_type, tag_id)
-    tag_delete_requested    = pyqtSignal(str, str)  # (file_type, tag_id)
+    tags_visible_changed      = pyqtSignal(bool)
+    tag_selected              = pyqtSignal(str, int, int, int, str)  # (file_type, x, y, z, tag_id)
+    tag_edit_requested        = pyqtSignal(str, str)   # (file_type, tag_id)
+    tag_delete_requested      = pyqtSignal(str, str)   # (file_type, tag_id)
+    tags_delete_many_requested = pyqtSignal(str, list) # (file_type, [tag_ids])
+    tags_clear_requested      = pyqtSignal(str)        # file_type
+    tags_clear_all_requested  = pyqtSignal()
     par_refresh_requested   = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -298,6 +301,7 @@ class Sidebar(QWidget):
         self._file_available: dict[str, bool] = {}
         self._annot_groups: dict[str, QButtonGroup] = {}
         self._note_draft_idx: int = -1  # which individual owns the in-progress note draft
+        self._tag_list_file_type: str = ""
 
         self._setup_ui()
         self.setMinimumWidth(0)
@@ -745,50 +749,76 @@ class Sidebar(QWidget):
         body.addWidget(self._show_tags_cb)
 
         self._tag_list_header = QLabel("Current: —")
-        self._tag_list_header.setStyleSheet(
-            "color: #666; font-size: 11px; padding: 1px 0;"
-        )
+        self._tag_list_header.setStyleSheet("color: #666; font-size: 11px; padding: 1px 0;")
         body.addWidget(self._tag_list_header)
 
-        self._tag_list_content = QWidget()
-        self._tag_list_content.setStyleSheet("background: #141414;")
-        self._tag_list_col = QVBoxLayout(self._tag_list_content)
-        self._tag_list_col.setContentsMargins(0, 2, 0, 2)
-        self._tag_list_col.setSpacing(1)
-        self._tag_list_empty_lbl = QLabel("No tags placed yet")
-        self._tag_list_empty_lbl.setWordWrap(True)
-        self._tag_list_empty_lbl.setStyleSheet(
-            "color: #555; font-size: 11px; padding: 4px 6px;"
+        self._tag_list = QListWidget()
+        self._tag_list.setFixedHeight(100)
+        self._tag_list.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
         )
-        self._tag_list_col.addWidget(self._tag_list_empty_lbl)
-        self._tag_list_col.addStretch()
-
-        tag_scroll = QScrollArea()
-        tag_scroll.setWidgetResizable(True)
-        tag_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        tag_scroll.setFixedHeight(100)
-        tag_scroll.setStyleSheet("""
-            QScrollArea { border: 1px solid #2e2e2e; background: #141414; }
+        self._tag_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tag_list.setStyleSheet("""
+            QListWidget {
+                background: #141414; border: 1px solid #2e2e2e;
+                color: #ccc; font-size: 11px; outline: none;
+            }
+            QListWidget::item { padding: 2px 6px; border-bottom: 1px solid #1c1c1c; }
+            QListWidget::item:selected { background: #1a3d26; color: #fff; }
+            QListWidget::item:hover:!selected { background: #1e1e1e; }
             QScrollBar:vertical { background: #141414; width: 8px; border: none; }
             QScrollBar::handle:vertical {
                 background: #3a3a3a; border-radius: 3px; min-height: 16px;
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
         """)
-        tag_scroll.setWidget(self._tag_list_content)
-        body.addWidget(tag_scroll)
+        self._tag_list.customContextMenuRequested.connect(self._on_tag_context_menu)
+        self._tag_list.itemClicked.connect(self._on_tag_item_clicked)
+        _WheelIsolator(self._tag_list)
+        body.addWidget(self._tag_list)
 
-        self._export_tags_btn = QPushButton("Export tags to CSV")
-        self._export_tags_btn.setStyleSheet(
+        _btn_style_green = (
             "QPushButton { background: #1a3d26; color: #5fd49a;"
             " border: 1px solid #2e6e42;"
             " border-radius: 3px; padding: 4px 8px; font-size: 11px; }"
             "QPushButton:hover { background: #147a3f; color: #fff; border-color: #3a8a52; }"
             "QPushButton:disabled { background: #1a1a1a; color: #3a3a3a; border-color: #252525; }"
         )
+        _btn_style_red = (
+            "QPushButton { background: #2a1010; color: #d06060;"
+            " border: 1px solid #6e2020;"
+            " border-radius: 3px; padding: 4px 8px; font-size: 11px; }"
+            "QPushButton:hover { background: #4a1a1a; color: #ff9090; border-color: #9e3030; }"
+            "QPushButton:disabled { background: #1a1a1a; color: #3a3a3a; border-color: #252525; }"
+        )
+
+        self._clear_tags_btn = QPushButton("Clear tags")
+        self._clear_tags_btn.setStyleSheet(_btn_style_red)
+        self._clear_tags_btn.setEnabled(False)
+        self._clear_tags_btn.setToolTip(
+            "Remove all tags for the currently displayed file type"
+        )
+        self._clear_tags_btn.clicked.connect(
+            lambda: self.tags_clear_requested.emit(self._tag_list_file_type)
+        )
+        body.addWidget(self._clear_tags_btn)
+
+        self._export_tags_btn = QPushButton("Export tags to CSV")
+        self._export_tags_btn.setStyleSheet(_btn_style_green)
         self._export_tags_btn.setEnabled(False)
         self._export_tags_btn.clicked.connect(self.export_tags_requested)
         body.addWidget(self._export_tags_btn)
+
+        body.addWidget(_sep())
+
+        self._clear_all_tags_btn = QPushButton("Clear tags for all individuals")
+        self._clear_all_tags_btn.setStyleSheet(_btn_style_red)
+        self._clear_all_tags_btn.setEnabled(False)
+        self._clear_all_tags_btn.setToolTip(
+            "Permanently delete all tags across every individual and file type"
+        )
+        self._clear_all_tags_btn.clicked.connect(self.tags_clear_all_requested)
+        body.addWidget(self._clear_all_tags_btn)
 
     def _pick_overlay_color(self, idx: int):
         r, g, b = self._overlay_colors[idx]
@@ -1095,61 +1125,37 @@ class Sidebar(QWidget):
         self._note_edit.blockSignals(False)
 
     def set_par_label(self, path: Path | None):
-        if path is None:
+        has_par = path is not None
+        if not has_par:
             self._par_label.setText("No file loaded")
             self._par_label.setStyleSheet("color: #666; font-size: 12px; font-style: italic;")
             self._par_refresh_btn.setVisible(False)
-            self._export_tags_btn.setEnabled(False)
         else:
             self._par_label.setText(path.name)
             self._par_label.setStyleSheet("color: #aaa; font-size: 12px; font-style: normal;")
             self._par_refresh_btn.setVisible(True)
-            self._export_tags_btn.setEnabled(True)
+        self._export_tags_btn.setEnabled(has_par)
+        self._clear_all_tags_btn.setEnabled(has_par)
 
     def update_tag_list(self, tags: list, file_type: str) -> None:
+        self._tag_list_file_type = file_type
         if file_type:
-            label = FILE_TYPE_LABELS.get(file_type, file_type)
-            self._tag_list_header.setText(f"Current: {label}")
+            self._tag_list_header.setText(
+                f"Current: {FILE_TYPE_LABELS.get(file_type, file_type)}"
+            )
         else:
             self._tag_list_header.setText("Current: —")
 
-        while self._tag_list_col.count():
-            item = self._tag_list_col.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
-        if not tags:
-            self._tag_list_empty_lbl = QLabel("No tags placed yet")
-            self._tag_list_empty_lbl.setWordWrap(True)
-            self._tag_list_empty_lbl.setStyleSheet(
-                "color: #555; font-size: 11px; padding: 4px 6px;"
-            )
-            self._tag_list_col.addWidget(self._tag_list_empty_lbl)
-            self._tag_list_col.addStretch()
-            return
-
+        self._tag_list.clear()
         for i, tag in enumerate(tags):
-            btn = QPushButton(f"#{i + 1}  {tag.note or '—'}")
-            btn.setFixedHeight(22)
+            item = QListWidgetItem(f"#{i + 1}  {tag.note or '—'}")
             coord_tip = f"({tag.x}, {tag.y}, {tag.z})"
-            btn.setToolTip(f"{coord_tip}\n{tag.note}" if tag.note else coord_tip)
-            btn.setStyleSheet(
-                f"QPushButton {{ background: #141414; color: #ccc; border: none;"
-                f" border-left: 3px solid {tag.color}; padding: 1px 6px;"
-                f" text-align: left; font-size: 11px; }}"
-                "QPushButton:hover { background: #1e2a20; color: #eee; }"
-            )
-            btn.clicked.connect(
-                lambda _, t=tag, ft=file_type:
-                    self.tag_selected.emit(ft, t.x, t.y, t.z, t.id)
-            )
-            btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-            btn.customContextMenuRequested.connect(
-                lambda pos, t=tag, ft=file_type, b=btn:
-                    self._show_tag_context_menu(b.mapToGlobal(pos), ft, t.id)
-            )
-            self._tag_list_col.addWidget(btn)
-        self._tag_list_col.addStretch()
+            item.setToolTip(f"{coord_tip}\n{tag.note}" if tag.note else coord_tip)
+            item.setForeground(QColor(tag.color))
+            item.setData(Qt.ItemDataRole.UserRole, (file_type, tag.x, tag.y, tag.z, tag.id))
+            self._tag_list.addItem(item)
+
+        self._clear_tags_btn.setEnabled(len(tags) > 0)
 
     def apply_saved_settings(self, turbo_stride: int, checked_types: list[str]) -> None:
         """Restore persisted user preferences on startup."""
@@ -1228,19 +1234,34 @@ class Sidebar(QWidget):
         self._anchor_set_btn.show()
         self.anchor_cancel_requested.emit()
 
-    def _show_tag_context_menu(self, global_pos, file_type: str, tag_id: str):
+    def _on_tag_item_clicked(self, item: QListWidgetItem):
+        ft, x, y, z, tag_id = item.data(Qt.ItemDataRole.UserRole)
+        self.tag_selected.emit(ft, x, y, z, tag_id)
+
+    def _on_tag_context_menu(self, pos):
+        selected = self._tag_list.selectedItems()
+        if not selected:
+            return
         menu = QMenu(self)
         menu.setStyleSheet(
             "QMenu { background: #1e1e1e; color: #ccc; border: 1px solid #444; }"
             "QMenu::item:selected { background: #147a3f; }"
         )
-        edit_act   = menu.addAction("Edit")
+        edit_act = menu.addAction("Edit") if len(selected) == 1 else None
         delete_act = menu.addAction("Delete")
-        action = menu.exec(global_pos)
-        if action == edit_act:
-            self.tag_edit_requested.emit(file_type, tag_id)
+        action = menu.exec(self._tag_list.mapToGlobal(pos))
+        if action is None:
+            return
+        ft = selected[0].data(Qt.ItemDataRole.UserRole)[0]
+        if edit_act is not None and action == edit_act:
+            tag_id = selected[0].data(Qt.ItemDataRole.UserRole)[4]
+            self.tag_edit_requested.emit(ft, tag_id)
         elif action == delete_act:
-            self.tag_delete_requested.emit(file_type, tag_id)
+            ids = [item.data(Qt.ItemDataRole.UserRole)[4] for item in selected]
+            if len(ids) == 1:
+                self.tag_delete_requested.emit(ft, ids[0])
+            else:
+                self.tags_delete_many_requested.emit(ft, ids)
 
     def _update_file_count(self):
         n = sum(1 for cb in self._file_checks.values() if cb.isChecked())
