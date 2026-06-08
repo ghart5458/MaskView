@@ -1314,6 +1314,7 @@ class ViewerPanel(QWidget):
             self._tag_store.remove(tag.id)
         self._viewer.set_tags(self._tag_store.tags)
         self.tags_changed.emit(self._tag_store.tags, self._file_type)
+        self._tag_btn.setChecked(False)
 
     def _on_tag_edit_requested(self, tag_id: str):
         if self._tag_store is None:
