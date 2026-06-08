@@ -4,8 +4,9 @@ from PyQt6.QtCore import QEvent, QObject, QPoint, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QCursor, QPainter
 from PyQt6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
-    QGridLayout, QHBoxLayout, QLabel, QListWidget, QMenu, QPushButton,
-    QRadioButton, QScrollArea, QSlider, QStyledItemDelegate, QVBoxLayout, QWidget,
+    QGridLayout, QHBoxLayout, QLabel, QListWidget, QMenu, QPlainTextEdit,
+    QPushButton, QRadioButton, QScrollArea, QSlider, QStyledItemDelegate,
+    QVBoxLayout, QWidget,
 )
 
 from .. import settings as _settings
@@ -279,6 +280,8 @@ class Sidebar(QWidget):
     composite_updated       = pyqtSignal(list)   # same format — live-update existing composite
     composite_blend_changed = pyqtSignal(str)    # "screen" or "alpha"
     annotation_changed      = pyqtSignal(str, str)  # (file_type, value: "Pass"/"Review"/"Fail"/"")
+    annotation_note_changed = pyqtSignal(str)        # note text for current individual
+    export_tags_requested   = pyqtSignal()
     tags_visible_changed    = pyqtSignal(bool)
     tag_selected            = pyqtSignal(str, int, int, int, str)  # (file_type, x, y, z, tag_id)
     tag_edit_requested      = pyqtSignal(str, str)  # (file_type, tag_id)
@@ -294,6 +297,7 @@ class Sidebar(QWidget):
         self._file_checks: dict[str, QCheckBox] = {}
         self._file_available: dict[str, bool] = {}
         self._annot_groups: dict[str, QButtonGroup] = {}
+        self._note_draft_idx: int = -1  # which individual owns the in-progress note draft
 
         self._setup_ui()
         self.setMinimumWidth(0)
@@ -774,6 +778,18 @@ class Sidebar(QWidget):
         tag_scroll.setWidget(self._tag_list_content)
         body.addWidget(tag_scroll)
 
+        self._export_tags_btn = QPushButton("Export tags to CSV")
+        self._export_tags_btn.setStyleSheet(
+            "QPushButton { background: #1a3d26; color: #5fd49a;"
+            " border: 1px solid #2e6e42;"
+            " border-radius: 3px; padding: 4px 8px; font-size: 11px; }"
+            "QPushButton:hover { background: #147a3f; color: #fff; border-color: #3a8a52; }"
+            "QPushButton:disabled { background: #1a1a1a; color: #3a3a3a; border-color: #252525; }"
+        )
+        self._export_tags_btn.setEnabled(False)
+        self._export_tags_btn.clicked.connect(self.export_tags_requested)
+        body.addWidget(self._export_tags_btn)
+
     def _pick_overlay_color(self, idx: int):
         r, g, b = self._overlay_colors[idx]
         dlg = _ColorSwatchPicker(QColor(r, g, b), self)
@@ -855,6 +871,14 @@ class Sidebar(QWidget):
         body.setContentsMargins(8, 8, 8, 6)
         body.setSpacing(4)
 
+        # Preserve unsaved note text only when rebuilding for the same individual
+        # (e.g. second file finishes loading while user is mid-sentence). Discard
+        # if the user navigated to a different individual.
+        _draft = ""
+        if hasattr(self, "_note_edit") and self._current_idx == self._note_draft_idx:
+            _draft = self._note_edit.toPlainText()
+        self._note_draft_idx = self._current_idx
+
         while body.count():
             item = body.takeAt(0)
             if item.widget():
@@ -865,7 +889,6 @@ class Sidebar(QWidget):
             lbl = QLabel("No panels open")
             lbl.setStyleSheet("color: #666; font-size: 12px;")
             body.addWidget(lbl)
-            return
 
         for ft in file_types:
             row_w = QWidget()
@@ -900,6 +923,35 @@ class Sidebar(QWidget):
 
             self._annot_groups[ft] = group
             body.addWidget(row_w)
+
+        body.addWidget(_sep())
+        note_lbl = QLabel("Individual note:")
+        note_lbl.setStyleSheet("color: #888; font-size: 11px; padding: 2px 0 1px 0;")
+        body.addWidget(note_lbl)
+
+        self._note_edit = QPlainTextEdit()
+        self._note_edit.setPlaceholderText("Notes…")
+        self._note_edit.setFixedHeight(44)   # ~2 lines
+        self._note_edit.setStyleSheet(
+            "QPlainTextEdit { background: #141414; color: #ccc; border: 1px solid #2e2e2e;"
+            " border-radius: 2px; font-size: 12px; padding: 2px 4px; }"
+            "QPlainTextEdit:focus { border-color: #3a8a52; }"
+        )
+        if _draft:
+            self._note_edit.setPlainText(_draft)
+        body.addWidget(self._note_edit)
+
+        self._note_save_btn = QPushButton("Save note")
+        self._note_save_btn.setStyleSheet(
+            "QPushButton { background: #1a3d26; color: #5fd49a;"
+            " border: 1px solid #2e6e42;"
+            " border-radius: 3px; padding: 3px 8px; font-size: 11px; }"
+            "QPushButton:hover { background: #147a3f; color: #fff; border-color: #3a8a52; }"
+        )
+        self._note_save_btn.clicked.connect(
+            lambda: self.annotation_note_changed.emit(self._note_edit.toPlainText())
+        )
+        body.addWidget(self._note_save_btn)
 
     def _build_individuals_section(self):
         body = self._sec_indiv.body
@@ -1032,15 +1084,27 @@ class Sidebar(QWidget):
             for btn in group.buttons():
                 btn.setChecked(btn.text() == target)
 
+    def set_annotation_note(self, text: str) -> None:
+        """Populate the note text box from disk. Skips if the box already has
+        content — that means _build_annotations_section restored a live draft
+        for this same individual and we should not clobber it."""
+        if self._note_edit.toPlainText():
+            return
+        self._note_edit.blockSignals(True)
+        self._note_edit.setPlainText(text)
+        self._note_edit.blockSignals(False)
+
     def set_par_label(self, path: Path | None):
         if path is None:
             self._par_label.setText("No file loaded")
             self._par_label.setStyleSheet("color: #666; font-size: 12px; font-style: italic;")
             self._par_refresh_btn.setVisible(False)
+            self._export_tags_btn.setEnabled(False)
         else:
             self._par_label.setText(path.name)
             self._par_label.setStyleSheet("color: #aaa; font-size: 12px; font-style: normal;")
             self._par_refresh_btn.setVisible(True)
+            self._export_tags_btn.setEnabled(True)
 
     def update_tag_list(self, tags: list, file_type: str) -> None:
         if file_type:

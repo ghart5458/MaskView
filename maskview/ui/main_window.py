@@ -1,4 +1,6 @@
+import csv
 import ctypes
+import json
 from pathlib import Path
 
 from PyQt6.QtCore import QThread, QTimer, pyqtSignal
@@ -382,6 +384,8 @@ class MainWindow(QMainWindow):
         self._sidebar.composite_blend_changed.connect(self._on_blend_changed)
 
         self._sidebar.annotation_changed.connect(self._on_annotation_changed)
+        self._sidebar.annotation_note_changed.connect(self._on_annotation_note_changed)
+        self._sidebar.export_tags_requested.connect(self._on_export_tags)
         self._sidebar.tags_visible_changed.connect(self._viewer.set_tags_visible)
         self._sidebar.tag_selected.connect(self._on_tag_selected)
         self._sidebar.tag_edit_requested.connect(self._on_tag_edit_from_sidebar)
@@ -1174,9 +1178,11 @@ class MainWindow(QMainWindow):
     def _refresh_annotations(self, fts: list[str]) -> None:
         """Rebuild annotation buttons and restore saved state for the current individual."""
         self._sidebar.update_annotations(fts)
-        if fts and 0 <= self._current_idx < len(self._individuals):
+        if 0 <= self._current_idx < len(self._individuals):
             ind = self._individuals[self._current_idx]
-            self._sidebar.set_annotations(self._annot_mgr.get_row(ind.oldname))
+            if fts:
+                self._sidebar.set_annotations(self._annot_mgr.get_row(ind.oldname))
+            self._sidebar.set_annotation_note(self._annot_mgr.get_note(ind.oldname))
 
     def _on_tag_selected(self, file_type: str, x: int, y: int, z: int, tag_id: str) -> None:
         panel = next((p for p in self._viewer.panels if p.file_type == file_type), None)
@@ -1203,6 +1209,49 @@ class MainWindow(QMainWindow):
             return
         ind = self._individuals[self._current_idx]
         self._annot_mgr.set(ind.oldname, ft, value)
+
+    def _on_annotation_note_changed(self, text: str) -> None:
+        if self._current_idx < 0:
+            return
+        ind = self._individuals[self._current_idx]
+        self._annot_mgr.set_note(ind.oldname, text)
+
+    def _on_export_tags(self) -> None:
+        if self._par_path is None or not self._individuals:
+            return
+        out_path = self._par_path.parent / (self._par_path.stem + "_tags_full.csv")
+        fieldnames = ["oldname", "file_type", "tag_number", "x", "y", "z", "note", "color"]
+        try:
+            with open(out_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                for ind in self._individuals:
+                    for ft in FILE_TYPE_ORDER:
+                        vol_path = resolve_file(ind, ft)
+                        if vol_path is None:
+                            continue
+                        json_path = vol_path.with_name(vol_path.stem + "_MV_tags.json")
+                        if not json_path.exists():
+                            continue
+                        try:
+                            raw = json.loads(json_path.read_text(encoding="utf-8"))
+                        except Exception:
+                            continue
+                        for i, tag in enumerate(raw, start=1):
+                            writer.writerow({
+                                "oldname":    ind.oldname,
+                                "file_type":  ft,
+                                "tag_number": i,
+                                "x":          tag.get("x", ""),
+                                "y":          tag.get("y", ""),
+                                "z":          tag.get("z", ""),
+                                "note":       tag.get("note", ""),
+                                "color":      tag.get("color", ""),
+                            })
+        except Exception as e:
+            self._notifs.show("Export failed", str(e), "warning")
+            return
+        self._notifs.show("Tags exported", out_path.name, "info")
 
     def _panel_fts_for_annotations(self) -> list[str]:
         return [p.file_type for p in self._viewer.panels if p.file_type != COMPOSITE_TYPE]
