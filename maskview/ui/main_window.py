@@ -826,6 +826,7 @@ class MainWindow(QMainWindow):
                 sig.disconnect()
             self._loader.stop()
             self._loader = None
+        self._loading = False
 
     def _on_file_loaded(self, ft: str, data: object, lo: float, hi: float):
         self._viewer.fill_panel(ft, data, lo, hi)
@@ -924,6 +925,12 @@ class MainWindow(QMainWindow):
             except RuntimeError:
                 pass
             loader.stop()
+            # Evict partial cache entries — a cancelled preloader may have written
+            # some but not all file types. Leaving a partial entry would cause
+            # _start_preload to skip re-queuing this individual indefinitely.
+            if (loader._idx in self._preload_cache
+                    and loader._idx not in self._preload_complete):
+                del self._preload_cache[loader._idx]
         self._zombie_preloaders.extend(self._preloaders)
         self._preloaders.clear()
         self._refresh_preload_indicators()
