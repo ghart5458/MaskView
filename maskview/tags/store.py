@@ -11,7 +11,7 @@ class Tag:
     y: int
     z: int
     note: str = ""
-    color: str = "#ff4444"
+    color: str = "#ffaa00"
 
 
 class TagStore:
@@ -26,7 +26,7 @@ class TagStore:
     def tags(self) -> list[Tag]:
         return list(self._tags)
 
-    def add(self, x: int, y: int, z: int, note: str = "", color: str = "#ff4444") -> Tag:
+    def add(self, x: int, y: int, z: int, note: str = "", color: str = "#ffaa00") -> Tag:
         tag = Tag(id=str(uuid.uuid4()), x=x, y=y, z=z, note=note, color=color)
         self._tags.append(tag)
         self._save()

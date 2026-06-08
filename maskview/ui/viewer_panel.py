@@ -1,4 +1,4 @@
-from PyQt6.QtCore import QEvent, QObject, QTimer, Qt, pyqtSignal
+﻿from PyQt6.QtCore import QEvent, QObject, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QCursor, QLinearGradient, QPainter, QPen
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -146,7 +146,7 @@ class _HistogramOverlay(QFrame):
         layout.addWidget(self._canvas)
 
         self._full_stack_cb = QCheckBox("Full stack")
-        self._full_stack_cb.setStyleSheet("color: #ccc; font-size: 12px;")
+        self._full_stack_cb.setStyleSheet("color: #ccc; font-size: 13px;")
         self._full_stack_cb.setChecked(True)
         self._full_stack_cb.stateChanged.connect(self._draw)
         layout.addWidget(self._full_stack_cb)
@@ -250,7 +250,7 @@ class _ColorSwatchPicker(QDialog):
             grid.addWidget(btn, row, col)
         n_rows = len(self._SWATCHES) // self._COLS
         gray_btn = _GrayscaleBtn("Use grayscale")
-        gray_btn.setFixedHeight(22)
+        gray_btn.setFixedHeight(24)
         gray_btn.clicked.connect(lambda: self._select(QColor(255, 255, 255)))
         grid.addWidget(gray_btn, n_rows, 0, 1, self._COLS)
         self.adjustSize()
@@ -297,15 +297,15 @@ class _ThresholdOverlay(QFrame):
         top_row = QHBoxLayout()
         top_row.setSpacing(6)
         hl_lbl = QLabel("Highlight")
-        hl_lbl.setStyleSheet("color: #ccc; font-size: 12px;")
+        hl_lbl.setStyleSheet("color: #ccc; font-size: 13px;")
         top_row.addWidget(hl_lbl, stretch=1)
 
         self._active_btn = QPushButton("OFF")
         self._active_btn.setCheckable(True)
-        self._active_btn.setFixedSize(44, 22)
+        self._active_btn.setFixedSize(46, 24)
         self._active_btn.setStyleSheet(
             "QPushButton { background: #2a2a2a; color: #666; border: 1px solid #444;"
-            " border-radius: 3px; font-size: 11px; font-weight: bold; }"
+            " border-radius: 3px; font-size: 12px; font-weight: bold; }"
             "QPushButton:checked { background: #0d3320; color: #2ce67f;"
             " border-color: #147a3f; }"
             "QPushButton:hover:!checked { background: #333; }"
@@ -333,9 +333,9 @@ class _ThresholdOverlay(QFrame):
         """
         _edit_style = (
             "QLineEdit { background: #222; color: #ccc; border: 1px solid #444;"
-            " border-radius: 3px; font-size: 11px; padding: 1px 4px; }"
+            " border-radius: 3px; font-size: 12px; padding: 1px 4px; }"
         )
-        _label_style = "color: #ccc; font-size: 12px;"
+        _label_style = "color: #ccc; font-size: 13px;"
 
         for name, attr in (("Min", "lo"), ("Max", "hi")):
             row = QHBoxLayout()
@@ -364,7 +364,7 @@ class _ThresholdOverlay(QFrame):
         otsu_btn = QPushButton("Auto (Otsu)")
         otsu_btn.setStyleSheet(
             "QPushButton { background: #333; color: #ccc; border: 1px solid #555;"
-            " border-radius: 3px; font-size: 11px; padding: 3px 8px; }"
+            " border-radius: 3px; font-size: 12px; padding: 3px 8px; }"
             "QPushButton:hover { background: #444; }"
         )
         otsu_btn.clicked.connect(self._apply_otsu)
@@ -547,7 +547,7 @@ class _BrightnessContrastOverlay(QFrame):
         layout.addWidget(self._canvas)
 
         self._full_stack_cb = QCheckBox("Full stack")
-        self._full_stack_cb.setStyleSheet("color: #ccc; font-size: 12px;")
+        self._full_stack_cb.setStyleSheet("color: #ccc; font-size: 13px;")
         self._full_stack_cb.setChecked(True)
         self._full_stack_cb.stateChanged.connect(self._draw_hist)
         layout.addWidget(self._full_stack_cb)
@@ -563,9 +563,9 @@ class _BrightnessContrastOverlay(QFrame):
         """
         _edit_style = (
             "QLineEdit { background: #222; color: #ccc; border: 1px solid #444;"
-            " border-radius: 3px; font-size: 11px; padding: 1px 4px; }"
+            " border-radius: 3px; font-size: 12px; padding: 1px 4px; }"
         )
-        _label_style = "color: #ccc; font-size: 12px;"
+        _label_style = "color: #ccc; font-size: 13px;"
 
         for name, attr in (("Min", "lo"), ("Max", "hi")):
             row = QHBoxLayout()
@@ -613,7 +613,7 @@ class _BrightnessContrastOverlay(QFrame):
         btn_row.setSpacing(6)
         _btn_style = (
             "QPushButton { background: #333; color: #ccc; border: 1px solid #555;"
-            " border-radius: 3px; font-size: 11px; padding: 3px 8px; }"
+            " border-radius: 3px; font-size: 12px; padding: 3px 8px; }"
             "QPushButton:hover { background: #444; }"
         )
         auto_btn = QPushButton("Auto")
@@ -823,18 +823,18 @@ class _BrightnessContrastOverlay(QFrame):
 class _TagEditDialog(QDialog):
     """Small dialog for creating or editing a tag (note + color)."""
 
-    def __init__(self, note: str = "", color: str = "#ff4444",
+    def __init__(self, note: str = "", color: str = "#ffaa00",
                  is_new: bool = True, parent=None):
         super().__init__(parent)
         self.setWindowTitle("New Tag" if is_new else "Edit Tag")
         self.setFixedWidth(260)
         self.setStyleSheet(
             "QDialog { background: #1e1e1e; }"
-            "QLabel { color: #ccc; font-size: 12px; }"
+            "QLabel { color: #ccc; font-size: 13px; }"
             "QLineEdit { background: #252525; color: #ddd; border: 1px solid #444;"
-            " border-radius: 3px; font-size: 12px; padding: 3px 5px; }"
+            " border-radius: 3px; font-size: 13px; padding: 3px 5px; }"
             "QPushButton { background: #333; color: #ccc; border: 1px solid #555;"
-            " border-radius: 3px; font-size: 12px; padding: 4px 12px; }"
+            " border-radius: 3px; font-size: 13px; padding: 4px 12px; }"
             "QPushButton:hover { background: #444; }"
         )
         self._color   = color
@@ -943,13 +943,13 @@ class _AnchorOverlay(QFrame):
         layout.setSpacing(6)
 
         self._lbl = QLabel("Click to place anchor")
-        self._lbl.setStyleSheet("color: #888; font-size: 11px; background: transparent;")
+        self._lbl.setStyleSheet("color: #888; font-size: 12px; background: transparent;")
         layout.addWidget(self._lbl)
 
         self._confirm_btn = QPushButton("Confirm")
         self._confirm_btn.setStyleSheet(
             "QPushButton { background: #1a3d26; color: #5fd49a; border: 1px solid #2e6e42;"
-            " border-radius: 3px; font-size: 11px; padding: 2px 8px; }"
+            " border-radius: 3px; font-size: 12px; padding: 2px 8px; }"
             "QPushButton:hover { background: #147a3f; color: #fff; }"
         )
         self._confirm_btn.clicked.connect(self.confirm_clicked)
@@ -958,7 +958,7 @@ class _AnchorOverlay(QFrame):
 
         _redo_style = (
             "QPushButton { background: #252525; color: #999; border: 1px solid #444;"
-            " border-radius: 3px; font-size: 11px; padding: 2px 8px; }"
+            " border-radius: 3px; font-size: 12px; padding: 2px 8px; }"
             "QPushButton:hover { background: #333; color: #eee; }"
         )
         self._redo_btn = QPushButton("Redo")
@@ -970,21 +970,21 @@ class _AnchorOverlay(QFrame):
 
     def set_waiting(self):
         self._lbl.setText("Click to place anchor")
-        self._lbl.setStyleSheet("color: #888; font-size: 11px; background: transparent;")
+        self._lbl.setStyleSheet("color: #888; font-size: 12px; background: transparent;")
         self._confirm_btn.hide()
         self._redo_btn.hide()
         self.adjustSize()
 
     def set_provisional(self, z: int):
         self._lbl.setText(f"Slice {z + 1}")
-        self._lbl.setStyleSheet("color: #ccc; font-size: 11px; background: transparent;")
+        self._lbl.setStyleSheet("color: #ccc; font-size: 12px; background: transparent;")
         self._confirm_btn.show()
         self._redo_btn.show()
         self.adjustSize()
 
     def set_confirmed(self, z: int):
         self._lbl.setText(f"✓  Slice {z + 1}")
-        self._lbl.setStyleSheet("color: #2ce67f; font-size: 11px; background: transparent;")
+        self._lbl.setStyleSheet("color: #2ce67f; font-size: 12px; background: transparent;")
         self._confirm_btn.hide()
         self._redo_btn.show()
         self.adjustSize()
@@ -1082,8 +1082,8 @@ class ViewerPanel(QWidget):
     anchor_confirmed = pyqtSignal(str, int, float, float)  # (file_type, slice_idx, scene_x, scene_y)
     anchor_cleared   = pyqtSignal(str)         # file_type
 
-    _BTN_W      = 52
-    _BTN_H      = 22
+    _BTN_W      = 54
+    _BTN_H      = 24
     _BTN_MARGIN = 20   # clears 8px scroll bar + comfortable padding
 
     def __init__(self, file_type: str, parent=None):
@@ -1100,14 +1100,14 @@ class ViewerPanel(QWidget):
         # ── Title bar ────────────────────────────────────────────────────────
         title_bar = _DraggableTitleBar()
         title_bar.setObjectName("titleBar")
-        title_bar.setFixedHeight(30)
+        title_bar.setFixedHeight(32)
         title_bar.setStyleSheet("#titleBar { background: #2d2d2d; }")
         bar = QHBoxLayout(title_bar)
         bar.setContentsMargins(8, 3, 4, 3)
 
         self._label = QLabel(FILE_TYPE_LABELS.get(file_type, file_type))
         self._label.setStyleSheet(
-            "color: #dddddd; font-weight: bold; font-size: 12px; background: transparent;"
+            "color: #dddddd; font-weight: bold; font-size: 13px; background: transparent;"
         )
         bar.addWidget(self._label)
 
@@ -1116,14 +1116,14 @@ class ViewerPanel(QWidget):
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
         self._filename_lbl.setStyleSheet(
-            "color: #999; font-size: 12px; font-style: italic; background: transparent;"
+            "color: #999; font-size: 13px; font-style: italic; background: transparent;"
         )
         bar.addWidget(self._filename_lbl, stretch=1)
 
         close_btn = QPushButton("✕")
-        close_btn.setFixedSize(20, 20)
+        close_btn.setFixedSize(22, 22)
         close_btn.setStyleSheet(
-            "QPushButton { color: #aaa; border: none; font-size: 11px; background: transparent; }"
+            "QPushButton { color: #aaa; border: none; font-size: 12px; background: transparent; }"
             "QPushButton:hover { color: white; background: #c0392b; border-radius: 3px; }"
         )
         close_btn.clicked.connect(self.closed)
@@ -1139,7 +1139,7 @@ class ViewerPanel(QWidget):
         # ── Floating buttons (not in layout — positioned absolutely) ─────────
         _btn_style = (
             "QPushButton { background: rgba(30,30,30,180); color: #888;"
-            " border: 1px solid #444; border-radius: 3px; font-size: 10px; }"
+            " border: 1px solid #444; border-radius: 3px; font-size: 11px; }"
             "QPushButton:hover { background: rgba(60,60,60,220); color: #eee; }"
         )
         self._hist_btn = QPushButton("Hist", self)
@@ -1159,7 +1159,7 @@ class ViewerPanel(QWidget):
         self._tag_btn.setFixedSize(self._BTN_W, self._BTN_H)
         self._tag_btn.setStyleSheet(
             "QPushButton { background: rgba(30,30,30,180); color: #888;"
-            " border: 1px solid #444; border-radius: 3px; font-size: 10px; }"
+            " border: 1px solid #444; border-radius: 3px; font-size: 11px; }"
             "QPushButton:hover { background: rgba(60,60,60,220); color: #eee; }"
             "QPushButton:checked { background: rgba(10,50,25,200); color: #2ce67f;"
             " border-color: #147a3f; }"

@@ -1,4 +1,4 @@
-import csv
+﻿import csv
 import ctypes
 import json
 from pathlib import Path
@@ -223,17 +223,17 @@ class _SessionRestoreOverlay(QWidget):
         card_lay.setSpacing(10)
 
         title = QLabel("Resume last session?")
-        title.setStyleSheet("color: #eee; font-size: 13px; font-weight: bold; border: none;")
+        title.setStyleSheet("color: #eee; font-size: 14px; font-weight: bold; border: none;")
         card_lay.addWidget(title)
 
         par_lbl = QLabel(par_name)
-        par_lbl.setStyleSheet("color: #888; font-size: 11px; border: none;")
+        par_lbl.setStyleSheet("color: #888; font-size: 12px; border: none;")
         par_lbl.setWordWrap(True)
         card_lay.addWidget(par_lbl)
 
         if ind_name:
             ind_lbl = QLabel(f"Last viewed: {ind_name}")
-            ind_lbl.setStyleSheet("color: #666; font-size: 11px; border: none;")
+            ind_lbl.setStyleSheet("color: #666; font-size: 12px; border: none;")
             ind_lbl.setWordWrap(True)
             card_lay.addWidget(ind_lbl)
 
@@ -244,7 +244,7 @@ class _SessionRestoreOverlay(QWidget):
         resume_btn = QPushButton("Resume")
         resume_btn.setStyleSheet(
             "QPushButton { background: #1a3d26; color: #5fd49a;"
-            " border: 1px solid #2e6e42; border-radius: 3px; padding: 5px 14px; font-size: 12px; }"
+            " border: 1px solid #2e6e42; border-radius: 3px; padding: 5px 14px; font-size: 13px; }"
             "QPushButton:hover { background: #147a3f; color: #fff; border: none; }"
         )
         resume_btn.clicked.connect(self._on_resume)
@@ -252,7 +252,7 @@ class _SessionRestoreOverlay(QWidget):
         fresh_btn = QPushButton("Start fresh")
         fresh_btn.setStyleSheet(
             "QPushButton { background: #252525; color: #888;"
-            " border: 1px solid #3a3a3a; border-radius: 3px; padding: 5px 14px; font-size: 12px; }"
+            " border: 1px solid #3a3a3a; border-radius: 3px; padding: 5px 14px; font-size: 13px; }"
             "QPushButton:hover { background: #303030; color: #ccc; border: none; }"
         )
         fresh_btn.clicked.connect(self._dismiss)

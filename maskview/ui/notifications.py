@@ -1,4 +1,4 @@
-from PyQt6.QtCore import QEasingCurve, QObject, QPoint, QPropertyAnimation, Qt, pyqtSignal
+﻿from PyQt6.QtCore import QEasingCurve, QObject, QPoint, QPropertyAnimation, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
@@ -34,13 +34,13 @@ class _NotifWidget(QFrame):
         header = QHBoxLayout()
         header.setSpacing(6)
         title_lbl = QLabel(title)
-        title_lbl.setStyleSheet(f"color: {fg}; font-size: 12px; font-weight: bold;")
+        title_lbl.setStyleSheet(f"color: {fg}; font-size: 13px; font-weight: bold;")
         header.addWidget(title_lbl, stretch=1)
 
         close_btn = QPushButton("✕")
-        close_btn.setFixedSize(16, 16)
+        close_btn.setFixedSize(18, 18)
         close_btn.setStyleSheet(
-            "QPushButton { color: #888; font-size: 10px; }"
+            "QPushButton { color: #888; font-size: 11px; }"
             "QPushButton:hover { color: #fff; }"
         )
         close_btn.clicked.connect(self.dismissed)
@@ -49,7 +49,7 @@ class _NotifWidget(QFrame):
 
         msg_lbl = QLabel(message)
         msg_lbl.setWordWrap(True)
-        msg_lbl.setStyleSheet("color: #ccc; font-size: 11px;")
+        msg_lbl.setStyleSheet("color: #ccc; font-size: 12px;")
         layout.addWidget(msg_lbl)
 
         self.adjustSize()

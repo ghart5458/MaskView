@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+﻿from dataclasses import dataclass
 
 import numpy as np
 from PyQt6.QtCore import QEvent, QPoint, QRect, QTimer, Qt, pyqtSignal
@@ -93,7 +93,7 @@ class MultiViewer(QWidget):
         self._welcome = QLabel("Select a PAR / CSV or individual scan to begin.", self)
         self._welcome.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._welcome.setStyleSheet(
-            "color: #3a3a3a; font-size: 14px; background: #111111;"
+            "color: #3a3a3a; font-size: 15px; background: #111111;"
         )
         self._welcome.setWordWrap(True)
 

@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -14,7 +14,7 @@ _DARK_INDICATOR_CSS = """
         color: #ddd;
         border: 1px solid #555;
         padding: 4px 6px;
-        font-size: 12px;
+        font-size: 13px;
     }
     QCheckBox::indicator {
         width: 13px; height: 13px;

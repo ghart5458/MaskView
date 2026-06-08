@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+﻿from dataclasses import dataclass, field
 
 import numpy as np
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
@@ -60,7 +60,7 @@ class CompositeViewer(QWidget):
         layout.addWidget(self._view, stretch=1)
 
         bar = QWidget()
-        bar.setFixedHeight(28)
+        bar.setFixedHeight(30)
         brow = QHBoxLayout(bar)
         brow.setContentsMargins(4, 4, 4, 4)
         self._slider = QSlider(Qt.Orientation.Horizontal)
@@ -82,7 +82,7 @@ class CompositeViewer(QWidget):
         self._info = QLabel("—")
         self._info.setFixedWidth(140)
         self._info.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self._info.setStyleSheet("color: #aaa; font-size: 12px;")
+        self._info.setStyleSheet("color: #aaa; font-size: 13px;")
         brow.addWidget(self._info)
         layout.addWidget(bar)
 
@@ -285,19 +285,19 @@ class CompositePanel(QWidget):
 
         title_bar = QWidget()
         title_bar.setObjectName("compTitleBar")
-        title_bar.setFixedHeight(30)
+        title_bar.setFixedHeight(32)
         title_bar.setStyleSheet("#compTitleBar { background: #2d2d2d; }")
         bar = QHBoxLayout(title_bar)
         bar.setContentsMargins(8, 3, 4, 3)
         lbl = QLabel("Color Composite")
         lbl.setStyleSheet(
-            "color: #dddddd; font-weight: bold; font-size: 12px; background: transparent;"
+            "color: #dddddd; font-weight: bold; font-size: 13px; background: transparent;"
         )
         bar.addWidget(lbl, stretch=1)
         close_btn = QPushButton("✕")
-        close_btn.setFixedSize(20, 20)
+        close_btn.setFixedSize(22, 22)
         close_btn.setStyleSheet(
-            "QPushButton { color: #aaa; border: none; font-size: 11px;"
+            "QPushButton { color: #aaa; border: none; font-size: 12px;"
             " background: transparent; }"
             "QPushButton:hover { color: white; background: #c0392b; border-radius: 3px; }"
         )

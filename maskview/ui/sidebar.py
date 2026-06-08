@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 
 from PyQt6.QtCore import QEvent, QObject, QPoint, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QCursor, QPainter
@@ -59,12 +59,12 @@ class _WheelIsolator(QObject):
 
 _TURBO_OFF_STYLE = (
     "QPushButton { background: #252525; color: #666; border: 1px solid #333;"
-    " border-radius: 3px; font-size: 11px; font-weight: bold; }"
+    " border-radius: 3px; font-size: 12px; font-weight: bold; }"
     "QPushButton:hover { color: #999; background: #2e2e2e; }"
 )
 _TURBO_ON_STYLE = (
     "QPushButton { background: #0f2a1a; color: #2ce67f; border: 1px solid #147a3f;"
-    " border-radius: 3px; font-size: 11px; font-weight: bold; }"
+    " border-radius: 3px; font-size: 12px; font-weight: bold; }"
     "QPushButton:hover { background: #147a3f; color: #fff; }"
 )
 
@@ -80,7 +80,7 @@ def _sep() -> QFrame:
 def _mini_label(text: str) -> QLabel:
     lbl = QLabel(text)
     lbl.setStyleSheet(
-        "color: #888; font-size: 12px; font-weight: bold;"
+        "color: #888; font-size: 13px; font-weight: bold;"
         " letter-spacing: 1px; padding: 4px 0 2px 0;"
     )
     return lbl
@@ -103,7 +103,7 @@ class _Section(QWidget):
         layout.setSpacing(0)
 
         self._hdr = QWidget()
-        self._hdr.setFixedHeight(28)
+        self._hdr.setFixedHeight(30)
         self._hdr.setStyleSheet(
             "QWidget { background: #1f1f1f; }"
             "QWidget:hover { background: #242424; }"
@@ -114,12 +114,12 @@ class _Section(QWidget):
         hrow.setSpacing(6)
 
         self._arrow = QLabel("▾" if expanded else "▸")
-        self._arrow.setStyleSheet("color: #777; font-size: 12px;")
+        self._arrow.setStyleSheet("color: #777; font-size: 13px;")
         self._arrow.setFixedWidth(10)
 
         self._title_lbl = QLabel(title.upper())
         self._title_lbl.setStyleSheet(
-            "color: #999; font-size: 12px; font-weight: bold; letter-spacing: 1px;"
+            "color: #999; font-size: 13px; font-weight: bold; letter-spacing: 1px;"
         )
         hrow.addWidget(self._arrow)
         hrow.addWidget(self._title_lbl, stretch=1)
@@ -157,7 +157,7 @@ class _ManualFileSelectDialog(QDialog):
         layout.setSpacing(8)
 
         intro = QLabel("Browse to each file individually.")
-        intro.setStyleSheet("color: #aaa; font-size: 12px; padding-bottom: 2px;")
+        intro.setStyleSheet("color: #aaa; font-size: 13px; padding-bottom: 2px;")
         layout.addWidget(intro)
 
         grid = QWidget()
@@ -169,18 +169,18 @@ class _ManualFileSelectDialog(QDialog):
         self._path_labels: dict = {}
         for i, ft in enumerate(file_types):
             type_lbl = QLabel(FILE_TYPE_LABELS.get(ft, ft))
-            type_lbl.setStyleSheet("color: #ccc; font-size: 12px;")
+            type_lbl.setStyleSheet("color: #ccc; font-size: 13px;")
             type_lbl.setFixedWidth(90)
 
             path_lbl = QLabel("—")
-            path_lbl.setStyleSheet("color: #555; font-size: 11px; font-style: italic;")
+            path_lbl.setStyleSheet("color: #555; font-size: 12px; font-style: italic;")
             self._path_labels[ft] = path_lbl
 
             browse_btn = QPushButton("Browse…")
             browse_btn.setFixedWidth(72)
             browse_btn.setStyleSheet(
                 "QPushButton { background: #252525; color: #999; border: 1px solid #3a3a3a;"
-                " border-radius: 3px; font-size: 11px; padding: 2px 6px; }"
+                " border-radius: 3px; font-size: 12px; padding: 2px 6px; }"
                 "QPushButton:hover { background: #2e2e2e; color: #ddd; }"
             )
             browse_btn.clicked.connect(lambda _, f=ft: self._browse_one(f))
@@ -196,14 +196,14 @@ class _ManualFileSelectDialog(QDialog):
         cancel_btn = QPushButton("Cancel")
         cancel_btn.setStyleSheet(
             "QPushButton { background: #252525; color: #999; border: 1px solid #3a3a3a;"
-            " border-radius: 3px; padding: 4px 12px; font-size: 12px; }"
+            " border-radius: 3px; padding: 4px 12px; font-size: 13px; }"
             "QPushButton:hover { background: #2e2e2e; color: #ddd; }"
         )
         cancel_btn.clicked.connect(self.reject)
         load_btn = QPushButton("Load")
         load_btn.setStyleSheet(
             "QPushButton { background: #1a3d26; color: #5fd49a; border: 1px solid #2e6e42;"
-            " border-radius: 3px; padding: 4px 12px; font-size: 12px; }"
+            " border-radius: 3px; padding: 4px 12px; font-size: 13px; }"
             "QPushButton:hover { background: #147a3f; color: #fff; border-color: #3a8a52; }"
         )
         load_btn.clicked.connect(self.accept)
@@ -220,7 +220,7 @@ class _ManualFileSelectDialog(QDialog):
             self._paths[ft] = Path(path)
             self._path_labels[ft].setText(Path(path).name)
             self._path_labels[ft].setStyleSheet(
-                "color: #aaa; font-size: 11px; font-style: normal;"
+                "color: #aaa; font-size: 12px; font-style: normal;"
             )
 
     @property
@@ -345,7 +345,7 @@ class Sidebar(QWidget):
         ca_layout.setSpacing(6)
         _ca_style = (
             "QPushButton { background: transparent; color: #888; border: none;"
-            " font-size: 12px; padding: 0; }"
+            " font-size: 13px; padding: 0; }"
             "QPushButton:hover { color: #bbb; }"
         )
         btn_collapse = QPushButton("collapse all")
@@ -356,7 +356,7 @@ class Sidebar(QWidget):
         btn_expand.clicked.connect(lambda: self._set_all_sections(True))
         ca_layout.addWidget(btn_collapse)
         _div = QLabel("|")
-        _div.setStyleSheet("color: #444; font-size: 12px;")
+        _div.setStyleSheet("color: #444; font-size: 13px;")
         ca_layout.addWidget(_div)
         ca_layout.addWidget(btn_expand)
         ca_layout.addStretch()
@@ -388,19 +388,19 @@ class Sidebar(QWidget):
         _nrow.setSpacing(4)
         _btn_style = (
             "QPushButton { background: #202020; color: #999; border: none;"
-            " border-radius: 3px; font-size: 12px; padding: 2px 6px; }"
+            " border-radius: 3px; font-size: 13px; padding: 2px 6px; }"
             "QPushButton:hover:enabled { background: #2c2c2c; color: #ddd; }"
             "QPushButton:disabled { color: #3a3a3a; }"
         )
         self._prev_btn = QPushButton("◀")
-        self._prev_btn.setFixedWidth(28)
+        self._prev_btn.setFixedWidth(30)
         self._prev_btn.setStyleSheet(_btn_style)
         self._prev_btn.clicked.connect(self._go_prev)
         self._counter = QLabel("— / —")
         self._counter.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._counter.setStyleSheet("color: #888; font-size: 12px;")
+        self._counter.setStyleSheet("color: #888; font-size: 13px;")
         self._next_btn = QPushButton("▶")
-        self._next_btn.setFixedWidth(28)
+        self._next_btn.setFixedWidth(30)
         self._next_btn.setStyleSheet(_btn_style)
         self._next_btn.clicked.connect(self._go_next)
         _nrow.addWidget(self._prev_btn)
@@ -423,10 +423,10 @@ class Sidebar(QWidget):
 
         _open_btn_style = (
             "QPushButton { background: #0f2a1a; color: #5fd49a; border: none;"
-            " border-radius: 3px; padding: 5px 8px; font-size: 12px; }"
+            " border-radius: 3px; padding: 5px 8px; font-size: 13px; }"
             "QPushButton:hover { background: #147a3f; color: #fff; }"
         )
-        _grp_lbl_style = "color: #666; font-size: 11px; font-style: italic; padding: 2px 0 1px 0;"
+        _grp_lbl_style = "color: #666; font-size: 12px; font-style: italic; padding: 2px 0 1px 0;"
         _medtool_lbl = QLabel("Medtool directory structure:")
         _medtool_lbl.setStyleSheet(_grp_lbl_style)
         body.addWidget(_medtool_lbl)
@@ -455,7 +455,7 @@ class Sidebar(QWidget):
         body.setSpacing(4)
 
         _cb_style = (
-            "QCheckBox { color: #888; font-size: 12px; padding: 1px 0; }"
+            "QCheckBox { color: #888; font-size: 13px; padding: 1px 0; }"
             "QCheckBox:enabled { color: #ccc; }"
             "QCheckBox:disabled { color: #4a4a4a; }"
         )
@@ -498,7 +498,7 @@ class Sidebar(QWidget):
         self._file_count_lbl = QLabel()
         self._file_count_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
         self._file_count_lbl.setStyleSheet(
-            "color: #666; font-size: 11px; padding: 0 2px 0 0;"
+            "color: #666; font-size: 12px; padding: 0 2px 0 0;"
         )
         body.addWidget(self._file_count_lbl)
         self._update_file_count()
@@ -509,7 +509,7 @@ class Sidebar(QWidget):
         self._apply_btn.setStyleSheet(
             "QPushButton { background: #1a3d26; color: #5fd49a;"
             " border: 1px solid #2e6e42;"
-            " border-radius: 3px; padding: 5px 8px; font-size: 12px; }"
+            " border-radius: 3px; padding: 5px 8px; font-size: 13px; }"
             "QPushButton:hover:enabled { background: #147a3f; color: #fff;"
             " border-color: #3a8a52; }"
             "QPushButton:disabled { background: #1a1a1a; color: #3a3a3a;"
@@ -528,7 +528,7 @@ class Sidebar(QWidget):
         for text in ("XY", "XZ", "YZ"):
             rb = QRadioButton(text)
             rb.setChecked(text == "XY")
-            rb.setStyleSheet("QRadioButton { color: #bbb; font-size: 12px; }")
+            rb.setStyleSheet("QRadioButton { color: #bbb; font-size: 13px; }")
             rb.toggled.connect(
                 lambda chk, t=text: self.orientation_changed.emit(t) if chk else None
             )
@@ -547,7 +547,7 @@ class Sidebar(QWidget):
         for text in ("2×2", "4×1"):
             rb = QRadioButton(text)
             rb.setChecked(text == "2×2")
-            rb.setStyleSheet("QRadioButton { color: #bbb; font-size: 12px; }")
+            rb.setStyleSheet("QRadioButton { color: #bbb; font-size: 13px; }")
             rb.toggled.connect(
                 lambda chk, t=text: self.layout_changed.emit(t) if chk else None
             )
@@ -566,7 +566,7 @@ class Sidebar(QWidget):
         drow.addStretch()
         self._turbo_idx = 0
         self._turbo_btn = QPushButton("NONE")
-        self._turbo_btn.setFixedSize(42, 22)
+        self._turbo_btn.setFixedSize(44, 24)
         self._turbo_btn.setToolTip(
             "Cycle downsampling on load (stride per axis).\n"
             "2× = half resolution.  4× = quarter resolution.\n"
@@ -588,10 +588,10 @@ class Sidebar(QWidget):
         self._sync_btn = QPushButton("ON")
         self._sync_btn.setCheckable(True)
         self._sync_btn.setChecked(True)
-        self._sync_btn.setFixedSize(42, 22)
+        self._sync_btn.setFixedSize(44, 24)
         self._sync_btn.setStyleSheet(
             "QPushButton { background: #252525; color: #666; border: 1px solid #333;"
-            " border-radius: 3px; font-size: 11px; font-weight: bold; }"
+            " border-radius: 3px; font-size: 12px; font-weight: bold; }"
             "QPushButton:hover { color: #999; background: #2e2e2e; }"
             "QPushButton:checked { background: #0f2a1a; color: #2ce67f;"
             " border-color: #147a3f; }"
@@ -610,7 +610,7 @@ class Sidebar(QWidget):
         arow.addWidget(_mini_label("ANCHOR SYNC"))
         arow.addStretch()
         self._anchor_set_btn = QPushButton("SET")
-        self._anchor_set_btn.setFixedSize(42, 22)
+        self._anchor_set_btn.setFixedSize(44, 24)
         self._anchor_set_btn.setStyleSheet(_TURBO_OFF_STYLE)
         self._anchor_set_btn.setToolTip(
             "Place matching anchor points in each panel to enable\n"
@@ -619,17 +619,17 @@ class Sidebar(QWidget):
         self._anchor_set_btn.clicked.connect(self._on_anchor_set_clicked)
         arow.addWidget(self._anchor_set_btn)
         self._anchor_apply_btn = QPushButton("APPLY")
-        self._anchor_apply_btn.setFixedSize(42, 22)
+        self._anchor_apply_btn.setFixedSize(44, 24)
         self._anchor_apply_btn.setStyleSheet(_TURBO_ON_STYLE)
         self._anchor_apply_btn.setToolTip("Activate offset sync using confirmed anchor points")
         self._anchor_apply_btn.clicked.connect(self._on_anchor_apply_clicked)
         self._anchor_apply_btn.hide()
         arow.addWidget(self._anchor_apply_btn)
         self._anchor_cancel_btn = QPushButton("✕")
-        self._anchor_cancel_btn.setFixedSize(22, 22)
+        self._anchor_cancel_btn.setFixedSize(24, 24)
         self._anchor_cancel_btn.setStyleSheet(
             "QPushButton { background: #252525; color: #666; border: 1px solid #333;"
-            " border-radius: 3px; font-size: 11px; font-weight: bold; }"
+            " border-radius: 3px; font-size: 12px; font-weight: bold; }"
             "QPushButton:hover { color: #e06060; background: #2e2e2e; }"
         )
         self._anchor_cancel_btn.setToolTip("Cancel anchor placement")
@@ -641,7 +641,7 @@ class Sidebar(QWidget):
         self._anchor_clear_btn = QPushButton("Clear anchors")
         self._anchor_clear_btn.setStyleSheet(
             "QPushButton { background: #252525; color: #666; border: 1px solid #333;"
-            " border-radius: 3px; font-size: 11px; padding: 3px 6px; }"
+            " border-radius: 3px; font-size: 12px; padding: 3px 6px; }"
             "QPushButton:hover { color: #e06060; background: #2e2e2e; }"
         )
         self._anchor_clear_btn.clicked.connect(self.anchor_clear_requested)
@@ -655,7 +655,7 @@ class Sidebar(QWidget):
 
         _combo_style = (
             "QComboBox { background: #252525; color: #ccc; border: 1px solid #3a3a3a;"
-            " border-radius: 2px; font-size: 11px; padding: 1px 3px; }"
+            " border-radius: 2px; font-size: 12px; padding: 1px 3px; }"
             "QComboBox::drop-down { border: none; width: 14px; }"
             "QComboBox QAbstractItemView { background: #252525; color: #ccc;"
             " selection-background-color: #147a3f; }"
@@ -716,7 +716,7 @@ class Sidebar(QWidget):
         brow_l.setContentsMargins(0, 2, 0, 2)
         brow_l.setSpacing(6)
         blend_lbl = QLabel("Overlay mode:")
-        blend_lbl.setStyleSheet("color: #888; font-size: 12px;")
+        blend_lbl.setStyleSheet("color: #888; font-size: 13px;")
         brow_l.addWidget(blend_lbl)
         self._blend_combo = _ScrollLockCombo()
         self._blend_combo.addItem("Screen", "screen")
@@ -730,7 +730,7 @@ class Sidebar(QWidget):
         self._create_composite_btn.setStyleSheet(
             "QPushButton { background: #1a3d26; color: #5fd49a;"
             " border: 1px solid #2e6e42;"
-            " border-radius: 3px; padding: 5px 8px; font-size: 12px; }"
+            " border-radius: 3px; padding: 5px 8px; font-size: 13px; }"
             "QPushButton:hover { background: #147a3f; color: #fff;"
             " border-color: #3a8a52; }"
         )
@@ -744,12 +744,12 @@ class Sidebar(QWidget):
 
         self._show_tags_cb = QCheckBox("Show tags")
         self._show_tags_cb.setChecked(True)
-        self._show_tags_cb.setStyleSheet("QCheckBox { color: #bbb; font-size: 12px; }")
+        self._show_tags_cb.setStyleSheet("QCheckBox { color: #bbb; font-size: 13px; }")
         self._show_tags_cb.toggled.connect(self.tags_visible_changed)
         body.addWidget(self._show_tags_cb)
 
         self._tag_list_header = QLabel("Current: —")
-        self._tag_list_header.setStyleSheet("color: #666; font-size: 11px; padding: 1px 0;")
+        self._tag_list_header.setStyleSheet("color: #666; font-size: 12px; padding: 1px 0;")
         body.addWidget(self._tag_list_header)
 
         self._tag_list = QListWidget()
@@ -761,7 +761,7 @@ class Sidebar(QWidget):
         self._tag_list.setStyleSheet("""
             QListWidget {
                 background: #141414; border: 1px solid #2e2e2e;
-                color: #ccc; font-size: 11px; outline: none;
+                color: #ccc; font-size: 12px; outline: none;
             }
             QListWidget::item { padding: 2px 6px; border-bottom: 1px solid #1c1c1c; }
             QListWidget::item:selected { background: #1a3d26; color: #fff; }
@@ -780,15 +780,22 @@ class Sidebar(QWidget):
         _btn_style_green = (
             "QPushButton { background: #1a3d26; color: #5fd49a;"
             " border: 1px solid #2e6e42;"
-            " border-radius: 3px; padding: 4px 8px; font-size: 11px; }"
+            " border-radius: 3px; padding: 4px 8px; font-size: 12px; }"
             "QPushButton:hover { background: #147a3f; color: #fff; border-color: #3a8a52; }"
             "QPushButton:disabled { background: #1a1a1a; color: #3a3a3a; border-color: #252525; }"
         )
         _btn_style_red = (
-            "QPushButton { background: #2a1010; color: #d06060;"
+            "QPushButton { background: #2a1010; color: #e07878;"
             " border: 1px solid #6e2020;"
-            " border-radius: 3px; padding: 4px 8px; font-size: 11px; }"
+            " border-radius: 3px; padding: 4px 8px; font-size: 12px; }"
             "QPushButton:hover { background: #4a1a1a; color: #ff9090; border-color: #9e3030; }"
+            "QPushButton:disabled { background: #1a1a1a; color: #3a3a3a; border-color: #252525; }"
+        )
+        _btn_style_yellow = (
+            "QPushButton { background: #2a2410; color: #d4c45e;"
+            " border: 1px solid #6e5e20;"
+            " border-radius: 3px; padding: 4px 8px; font-size: 12px; }"
+            "QPushButton:hover { background: #3a3418; color: #ffe066; border-color: #9e8a1a; }"
             "QPushButton:disabled { background: #1a1a1a; color: #3a3a3a; border-color: #252525; }"
         )
 
@@ -803,16 +810,16 @@ class Sidebar(QWidget):
         )
         body.addWidget(self._clear_tags_btn)
 
-        self._export_tags_btn = QPushButton("Export tags to CSV")
+        body.addWidget(_sep())
+
+        self._export_tags_btn = QPushButton("Export tags for all individuals")
         self._export_tags_btn.setStyleSheet(_btn_style_green)
         self._export_tags_btn.setEnabled(False)
         self._export_tags_btn.clicked.connect(self.export_tags_requested)
         body.addWidget(self._export_tags_btn)
 
-        body.addWidget(_sep())
-
         self._clear_all_tags_btn = QPushButton("Clear tags for all individuals")
-        self._clear_all_tags_btn.setStyleSheet(_btn_style_red)
+        self._clear_all_tags_btn.setStyleSheet(_btn_style_yellow)
         self._clear_all_tags_btn.setEnabled(False)
         self._clear_all_tags_btn.setToolTip(
             "Permanently delete all tags across every individual and file type"
@@ -917,7 +924,7 @@ class Sidebar(QWidget):
 
         if not file_types:
             lbl = QLabel("No panels open")
-            lbl.setStyleSheet("color: #666; font-size: 12px;")
+            lbl.setStyleSheet("color: #666; font-size: 13px;")
             body.addWidget(lbl)
 
         for ft in file_types:
@@ -928,7 +935,7 @@ class Sidebar(QWidget):
             rrow.setSpacing(3)
 
             lbl = QLabel(FILE_TYPE_LABELS.get(ft, ft))
-            lbl.setStyleSheet("color: #aaa; font-size: 12px;")
+            lbl.setStyleSheet("color: #aaa; font-size: 13px;")
             rrow.addWidget(lbl, stretch=1)
 
             group = QButtonGroup(row_w)
@@ -937,10 +944,10 @@ class Sidebar(QWidget):
                 btn = QPushButton(text)
                 btn.setCheckable(True)
                 btn.setAutoExclusive(False)
-                btn.setFixedHeight(18)
+                btn.setFixedHeight(20)
                 btn.setStyleSheet(
                     "QPushButton { background: #252525; color: #888; border: none;"
-                    f" border-radius: 2px; font-size: 12px; padding: 0 5px; }}"
+                    f" border-radius: 2px; font-size: 13px; padding: 0 5px; }}"
                     f"QPushButton:checked {{ background: {color}; color: #ddd; }}"
                     "QPushButton:hover:!checked { background: #2e2e2e; color: #aaa; }"
                 )
@@ -956,15 +963,14 @@ class Sidebar(QWidget):
 
         body.addWidget(_sep())
         note_lbl = QLabel("Individual note:")
-        note_lbl.setStyleSheet("color: #888; font-size: 11px; padding: 2px 0 1px 0;")
+        note_lbl.setStyleSheet("color: #888; font-size: 12px; padding: 2px 0 1px 0;")
         body.addWidget(note_lbl)
 
         self._note_edit = QPlainTextEdit()
-        self._note_edit.setPlaceholderText("Notes…")
-        self._note_edit.setFixedHeight(44)   # ~2 lines
+        self._note_edit.setFixedHeight(48)   # ~2 lines
         self._note_edit.setStyleSheet(
             "QPlainTextEdit { background: #141414; color: #ccc; border: 1px solid #2e2e2e;"
-            " border-radius: 2px; font-size: 12px; padding: 2px 4px; }"
+            " border-radius: 2px; font-size: 13px; padding: 2px 4px; }"
             "QPlainTextEdit:focus { border-color: #3a8a52; }"
         )
         if _draft:
@@ -975,7 +981,7 @@ class Sidebar(QWidget):
         self._note_save_btn.setStyleSheet(
             "QPushButton { background: #1a3d26; color: #5fd49a;"
             " border: 1px solid #2e6e42;"
-            " border-radius: 3px; padding: 3px 8px; font-size: 11px; }"
+            " border-radius: 3px; padding: 3px 8px; font-size: 12px; }"
             "QPushButton:hover { background: #147a3f; color: #fff; border-color: #3a8a52; }"
         )
         self._note_save_btn.clicked.connect(
@@ -997,7 +1003,7 @@ class Sidebar(QWidget):
         self._indiv_list.setStyleSheet("""
             QListWidget {
                 background: #181818; border: 1px solid #2e2e2e;
-                color: #ccc; font-size: 12px;
+                color: #ccc; font-size: 13px;
             }
             QListWidget::item { padding: 3px 10px; border-bottom: 1px solid #1c1c1c; }
             QListWidget::item:selected { background: #147a3f; color: #fff; }
@@ -1024,17 +1030,17 @@ class Sidebar(QWidget):
         foot_row.setSpacing(4)
 
         self._par_label = QLabel("No file loaded")
-        self._par_label.setStyleSheet("color: #555; font-size: 11px; font-style: italic;")
+        self._par_label.setStyleSheet("color: #555; font-size: 12px; font-style: italic;")
         self._par_label.setWordWrap(True)
         foot_row.addWidget(self._par_label, stretch=1)
 
         self._par_refresh_btn = QPushButton("↻")
-        self._par_refresh_btn.setFixedSize(18, 18)
+        self._par_refresh_btn.setFixedSize(20, 20)
         self._par_refresh_btn.setToolTip("Refresh PAR file")
         self._par_refresh_btn.setVisible(False)
         self._par_refresh_btn.setStyleSheet(
             "QPushButton { background: #252525; color: #666; border: 1px solid #333;"
-            " border-radius: 3px; font-size: 13px; padding: 0; }"
+            " border-radius: 3px; font-size: 14px; padding: 0; }"
             "QPushButton:hover { color: #aaa; background: #2e2e2e; }"
         )
         self._par_refresh_btn.clicked.connect(self.par_refresh_requested)
@@ -1128,11 +1134,11 @@ class Sidebar(QWidget):
         has_par = path is not None
         if not has_par:
             self._par_label.setText("No file loaded")
-            self._par_label.setStyleSheet("color: #666; font-size: 12px; font-style: italic;")
+            self._par_label.setStyleSheet("color: #666; font-size: 13px; font-style: italic;")
             self._par_refresh_btn.setVisible(False)
         else:
             self._par_label.setText(path.name)
-            self._par_label.setStyleSheet("color: #aaa; font-size: 12px; font-style: normal;")
+            self._par_label.setStyleSheet("color: #aaa; font-size: 13px; font-style: normal;")
             self._par_refresh_btn.setVisible(True)
         self._export_tags_btn.setEnabled(has_par)
         self._clear_all_tags_btn.setEnabled(has_par)
@@ -1178,7 +1184,7 @@ class Sidebar(QWidget):
             self._create_composite_btn.setStyleSheet(
                 "QPushButton { background: #2a2a18; color: #c8b84a;"
                 " border: 1px solid #6e6012;"
-                " border-radius: 3px; padding: 5px 8px; font-size: 12px; }"
+                " border-radius: 3px; padding: 5px 8px; font-size: 13px; }"
                 "QPushButton:hover { background: #3a3a20; color: #ffe066;"
                 " border-color: #9e8a1a; }"
             )
@@ -1187,7 +1193,7 @@ class Sidebar(QWidget):
             self._create_composite_btn.setStyleSheet(
                 "QPushButton { background: #1a3d26; color: #5fd49a;"
                 " border: 1px solid #2e6e42;"
-                " border-radius: 3px; padding: 5px 8px; font-size: 12px; }"
+                " border-radius: 3px; padding: 5px 8px; font-size: 13px; }"
                 "QPushButton:hover { background: #147a3f; color: #fff;"
                 " border-color: #3a8a52; }"
             )

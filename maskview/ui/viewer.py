@@ -1,4 +1,4 @@
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QPoint, QPointF
+﻿from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QPoint, QPointF
 from PyQt6.QtGui import QBrush, QColor, QImage, QPainter, QPen, QPixmap, QWheelEvent, QMouseEvent
 from PyQt6.QtWidgets import (
     QGraphicsPixmapItem,
@@ -66,7 +66,7 @@ class VolumeViewer(QWidget):
 
         bar_widget = QWidget()
         bar_widget.setContentsMargins(0, 0, 0, 0)
-        bar_widget.setFixedHeight(28)
+        bar_widget.setFixedHeight(30)
         bar = QHBoxLayout(bar_widget)
         bar.setContentsMargins(4, 4, 4, 4)
         self._slider = QSlider(Qt.Orientation.Horizontal)
@@ -88,7 +88,7 @@ class VolumeViewer(QWidget):
         self._info = QLabel("—")
         self._info.setFixedWidth(140)
         self._info.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self._info.setStyleSheet("color: #aaa; font-size: 12px;")
+        self._info.setStyleSheet("color: #aaa; font-size: 13px;")
         bar.addWidget(self._info)
 
         layout.addWidget(bar_widget)
@@ -427,7 +427,7 @@ class _PanZoomView(QGraphicsView):
         self._tag_tip = QLabel("", self.viewport())
         self._tag_tip.setStyleSheet(
             "QLabel { background: #1e1e1e; color: #ddd; border: 1px solid #444;"
-            " border-radius: 3px; padding: 3px 6px; font-size: 12px; }"
+            " border-radius: 3px; padding: 3px 6px; font-size: 13px; }"
         )
         self._tag_tip.setVisible(False)
         self._tag_tip.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
