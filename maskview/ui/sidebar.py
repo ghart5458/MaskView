@@ -977,16 +977,32 @@ class Sidebar(QWidget):
             self._note_edit.setPlainText(_draft)
         body.addWidget(self._note_edit)
 
-        self._note_save_btn = QPushButton("Save note")
-        self._note_save_btn.setStyleSheet(
+        _save_normal = (
             "QPushButton { background: #1a3d26; color: #5fd49a;"
             " border: 1px solid #2e6e42;"
             " border-radius: 3px; padding: 3px 8px; font-size: 12px; }"
             "QPushButton:hover { background: #147a3f; color: #fff; border-color: #3a8a52; }"
         )
-        self._note_save_btn.clicked.connect(
-            lambda: self.annotation_note_changed.emit(self._note_edit.toPlainText())
+        _save_saved = (
+            "QPushButton { background: #1e1e1e; color: #555;"
+            " border: 1px solid #2a2a2a;"
+            " border-radius: 3px; padding: 3px 8px; font-size: 12px; }"
         )
+        self._note_save_btn = QPushButton("Save note")
+        self._note_save_btn.setStyleSheet(_save_normal)
+
+        def _on_save_note():
+            self.annotation_note_changed.emit(self._note_edit.toPlainText())
+            self._note_save_btn.setText("Saved.")
+            self._note_save_btn.setStyleSheet(_save_saved)
+
+        def _on_note_text_changed():
+            if self._note_save_btn.text() == "Saved.":
+                self._note_save_btn.setText("Save note")
+                self._note_save_btn.setStyleSheet(_save_normal)
+
+        self._note_save_btn.clicked.connect(_on_save_note)
+        self._note_edit.textChanged.connect(_on_note_text_changed)
         body.addWidget(self._note_save_btn)
 
     def _build_individuals_section(self):
