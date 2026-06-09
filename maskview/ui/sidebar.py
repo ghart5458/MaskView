@@ -5,8 +5,9 @@ from PyQt6.QtGui import QColor, QCursor, QPainter
 from PyQt6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog,
     QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QListWidget,
-    QListWidgetItem, QMenu, QPlainTextEdit, QPushButton, QRadioButton,
-    QScrollArea, QSlider, QStyledItemDelegate, QVBoxLayout, QWidget,
+    QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit, QPushButton,
+    QRadioButton, QScrollArea, QSlider, QStyledItemDelegate, QVBoxLayout,
+    QWidget,
 )
 
 from .. import settings as _settings
@@ -784,6 +785,13 @@ class Sidebar(QWidget):
             "QPushButton:hover { background: #147a3f; color: #fff; border-color: #3a8a52; }"
             "QPushButton:disabled { background: #1a1a1a; color: #3a3a3a; border-color: #252525; }"
         )
+        self._export_btn_normal_style = _btn_style_green
+        _export_done_style = (
+            "QPushButton { background: #1a1a1a; color: #555; border: 1px solid #2a2a2a;"
+            " border-radius: 3px; padding: 4px 8px; font-size: 12px; }"
+            "QPushButton:hover { background: #222; color: #888; border-color: #3a3a3a; }"
+            "QPushButton:disabled { background: #1a1a1a; color: #3a3a3a; border-color: #252525; }"
+        )
         _btn_style_red = (
             "QPushButton { background: #2a1010; color: #e07878;"
             " border: 1px solid #6e2020;"
@@ -815,7 +823,19 @@ class Sidebar(QWidget):
         self._export_tags_btn = QPushButton("Export tags for all individuals")
         self._export_tags_btn.setStyleSheet(_btn_style_green)
         self._export_tags_btn.setEnabled(False)
-        self._export_tags_btn.clicked.connect(self.export_tags_requested)
+
+        def _on_export_click():
+            reply = QMessageBox.question(
+                self, "Export tags",
+                "Export all tags for this PAR to CSV?",
+                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+            )
+            if reply == QMessageBox.StandardButton.Ok:
+                self.export_tags_requested.emit()
+                self._export_tags_btn.setText("Exported.")
+                self._export_tags_btn.setStyleSheet(_export_done_style)
+
+        self._export_tags_btn.clicked.connect(_on_export_click)
         body.addWidget(self._export_tags_btn)
 
         self._clear_all_tags_btn = QPushButton("Clear tags for all individuals")
@@ -1157,6 +1177,9 @@ class Sidebar(QWidget):
             self._par_label.setStyleSheet("color: #aaa; font-size: 13px; font-style: normal;")
             self._par_refresh_btn.setVisible(True)
         self._export_tags_btn.setEnabled(has_par)
+        if has_par:
+            self._export_tags_btn.setText("Export tags for all individuals")
+            self._export_tags_btn.setStyleSheet(self._export_btn_normal_style)
         self._clear_all_tags_btn.setEnabled(has_par)
 
     def update_tag_list(self, tags: list, file_type: str) -> None:
