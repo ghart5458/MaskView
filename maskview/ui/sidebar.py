@@ -1,13 +1,13 @@
 ﻿from pathlib import Path
 
 from PyQt6.QtCore import QEvent, QObject, QPoint, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QCursor, QPainter
+from PyQt6.QtGui import QColor, QCursor, QPainter, QPalette, QPen
 from PyQt6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog,
     QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QListWidget,
     QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit, QPushButton,
-    QRadioButton, QScrollArea, QSlider, QStyledItemDelegate, QVBoxLayout,
-    QWidget,
+    QRadioButton, QScrollArea, QSlider, QStyle, QStyledItemDelegate,
+    QStyleOptionViewItem, QVBoxLayout, QWidget,
 )
 
 from .. import settings as _settings
@@ -229,34 +229,89 @@ class _ManualFileSelectDialog(QDialog):
         return dict(self._paths)
 
 
-_DOT_ROLE = Qt.ItemDataRole.UserRole + 1
+_DOT_ROLE   = Qt.ItemDataRole.UserRole + 1
+_GRAY_ROLE  = Qt.ItemDataRole.UserRole + 2
+_ANNOT_ROLE = Qt.ItemDataRole.UserRole + 3
 
 _DOT_COLORS = {
     'cached':  QColor('#1aad5e'),
     'loading': QColor('#c8b84a'),
 }
 
+_ANNOT_COLORS = {
+    'Pass':   QColor('#1aad5e'),
+    'Review': QColor('#c8a84a'),
+    'Fail':   QColor('#cc3333'),
+}
+
 
 class _PreloadDotDelegate(QStyledItemDelegate):
-    """Draws a small status dot flush to the right edge of each list item."""
+    """Draws a small status dot and annotation indicator on each list item."""
 
     def paint(self, painter, option, index):
-        super().paint(painter, option, index)
-        status = index.data(_DOT_ROLE)
-        color = _DOT_COLORS.get(status)
-        if color is None:
-            return
-        r = option.rect
-        d = 6
-        x = r.right() - d - 5
-        y = r.top() + (r.height() - d) // 2
+        grayed = index.data(_GRAY_ROLE)
+        if grayed:
+            opt = QStyleOptionViewItem(option)
+            is_sel = bool(opt.state & QStyle.StateFlag.State_Selected)
+            if not is_sel:
+                opt.palette.setColor(QPalette.ColorGroup.Normal,
+                                     QPalette.ColorRole.Text, QColor("#4a4a4a"))
+            super().paint(painter, opt, index)
+        else:
+            super().paint(painter, option, index)
+
+        r   = option.rect
+        ds  = 8    # preload square side  (was 6px circle)
+        das = 10   # annotation square side (was 8px circle)
+        gap = 5    # gap between the two squares
+        x   = r.right() - ds - 5
+        y   = r.top() + (r.height() - ds) // 2
+
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(255, 255, 255, 200))
-        painter.drawEllipse(x - 1, y - 1, d + 2, d + 2)
-        painter.setBrush(color)
-        painter.drawEllipse(x, y, d, d)
+
+        # ── Annotation square (to the left of the preload square) ────────
+        annot       = index.data(_ANNOT_ROLE)
+        annot_color = _ANNOT_COLORS.get(annot)
+        if annot_color is not None:
+            xa  = x - 1 - gap - das   # 1=halo margin
+            ya  = r.top() + (r.height() - das) // 2
+            cx  = xa + das // 2
+            cy  = ya + das // 2
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(annot_color)
+            painter.drawRoundedRect(xa, ya, das, das, 1.5, 1.5)
+            sym_pen = QPen(QColor("#ffffff"), 1.5)
+            sym_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            sym_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(sym_pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            if annot == "Pass":
+                painter.drawLine(cx - 3, cy - 1, cx - 1, cy + 2)
+                painter.drawLine(cx - 1, cy + 2, cx + 3, cy - 2)
+            elif annot == "Review":
+                painter.drawLine(cx, cy - 3, cx, cy + 1)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor("#ffffff"))
+                painter.drawEllipse(cx - 1, cy + 3, 2, 2)
+            elif annot == "Fail":
+                painter.drawLine(cx - 3, cy - 3, cx + 3, cy + 3)
+                painter.drawLine(cx + 3, cy - 3, cx - 3, cy + 3)
+
+        # ── Preload square (always drawn; outline only when not queued) ───
+        status    = index.data(_DOT_ROLE)
+        dot_color = _DOT_COLORS.get(status)
+        if dot_color is not None:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(255, 255, 255, 200))
+            painter.drawRoundedRect(x - 1, y - 1, ds + 2, ds + 2, 2.0, 2.0)
+            painter.setBrush(dot_color)
+            painter.drawRoundedRect(x, y, ds, ds, 1.5, 1.5)
+        else:
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor("#3a3a3a"), 1.0))
+            painter.drawRoundedRect(x, y, ds, ds, 1.5, 1.5)
+
         painter.restore()
 
 
@@ -282,6 +337,7 @@ class Sidebar(QWidget):
     composite_blend_changed = pyqtSignal(str)    # "screen" or "alpha"
     annotation_changed      = pyqtSignal(str, str)  # (file_type, value: "Pass"/"Review"/"Fail"/"")
     annotation_note_changed = pyqtSignal(str)        # note text for current individual
+    filter_changed          = pyqtSignal(str)        # "All", "Pass", "Review", "Fail"
     export_tags_requested   = pyqtSignal()
     tags_visible_changed      = pyqtSignal(bool)
     tag_selected              = pyqtSignal(str, int, int, int, str)  # (file_type, x, y, z, tag_id)
@@ -303,6 +359,10 @@ class Sidebar(QWidget):
         self._annot_groups: dict[str, QButtonGroup] = {}
         self._note_draft_idx: int = -1  # which individual owns the in-progress note draft
         self._tag_list_file_type: str = ""
+        self._filter_mode: str = "All"
+        self._filtered_indices: list[int] = []
+        self._filtered_set: set[int] = set()
+        self._filter_btns: dict[str, QPushButton] = {}
 
         self._setup_ui()
         self.setMinimumWidth(0)
@@ -1025,10 +1085,59 @@ class Sidebar(QWidget):
         self._note_edit.textChanged.connect(_on_note_text_changed)
         body.addWidget(self._note_save_btn)
 
+    def _build_filter_row(self) -> QWidget:
+        row = QWidget()
+        row.setStyleSheet("background: transparent;")
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(10, 5, 8, 2)
+        layout.setSpacing(4)
+
+        lbl = QLabel("Show:")
+        lbl.setStyleSheet("color: #666; font-size: 12px;")
+        layout.addWidget(lbl)
+
+        group = QButtonGroup(row)
+        group.setExclusive(True)
+
+        _FILTER_STYLES = {
+            "All":    ("background:#252525; color:#999;",    "background:#444;    color:#eee;"),
+            "Pass":   ("background:#0f2a1a; color:#5fd49a;", "background:#1a5a2a; color:#7eeab0;"),
+            "Review": ("background:#2a2010; color:#c8a84a;", "background:#5a4a10; color:#e8c860;"),
+            "Fail":   ("background:#2a1010; color:#e05555;", "background:#5a1a14; color:#ff7070;"),
+        }
+        for label, (normal, checked) in _FILTER_STYLES.items():
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setStyleSheet(
+                f"QPushButton {{ {normal} border:none; border-radius:3px;"
+                f" font-size:11px; padding:2px 7px; }}"
+                f"QPushButton:checked {{ {checked} }}"
+                f"QPushButton:hover:!checked {{ background:#2e2e2e; color:#bbb; }}"
+            )
+            group.addButton(btn)
+            self._filter_btns[label] = btn
+            layout.addWidget(btn)
+
+        self._filter_btns["All"].setChecked(True)
+        layout.addStretch()
+        group.buttonToggled.connect(self._on_filter_toggled)
+        return row
+
+    def _on_filter_toggled(self, btn: QPushButton, checked: bool) -> None:
+        if not checked:
+            return
+        for label, b in self._filter_btns.items():
+            if b is btn:
+                self._filter_mode = label
+                self.filter_changed.emit(label)
+                return
+
     def _build_individuals_section(self):
         body = self._sec_indiv.body
         body.setContentsMargins(0, 2, 0, 0)
         body.setSpacing(0)
+
+        body.addWidget(self._build_filter_row())
 
         self._indiv_list = QListWidget()
         self._indiv_list.setUniformItemSizes(True)
@@ -1090,10 +1199,19 @@ class Sidebar(QWidget):
         self._individuals = individuals
         self._current_idx = -1
         self._loaded_idx  = -1
+        # Reset filter to All
+        self._filter_mode = "All"
+        self._filtered_indices = list(range(len(individuals)))
+        self._filtered_set = set(self._filtered_indices)
+        if self._filter_btns:
+            self._filter_btns["All"].blockSignals(True)
+            self._filter_btns["All"].setChecked(True)
+            self._filter_btns["All"].blockSignals(False)
         self._indiv_list.blockSignals(True)
         self._indiv_list.clear()
         for i, ind in enumerate(individuals):
-            self._indiv_list.addItem(f"{i + 1}.  {ind.oldname}")
+            item = QListWidgetItem(f"{i + 1}.  {ind.oldname}")
+            self._indiv_list.addItem(item)
         self._indiv_list.blockSignals(False)
         self._counter.setText("— / —")
         self._refresh_nav(-1)
@@ -1123,10 +1241,43 @@ class Sidebar(QWidget):
             self._indiv_list.blockSignals(False)
             self._current_idx = idx
             self._loaded_idx  = idx
-            n = len(self._individuals)
-            self._counter.setText(f"{idx + 1} / {n}")
+            self._update_filter_counter()
             self._refresh_nav(idx)
             self._apply_btn.setEnabled(True)
+
+    @property
+    def filter_mode(self) -> str:
+        return self._filter_mode
+
+    @property
+    def filtered_indices(self) -> list[int]:
+        return list(self._filtered_indices)
+
+    def apply_filter(self, filter_mode: str, matching_indices: list[int]) -> None:
+        """Gray out non-matching individuals and update counter/nav. Called by MainWindow."""
+        self._filter_mode = filter_mode
+        self._filtered_indices = sorted(matching_indices)
+        self._filtered_set = set(matching_indices)
+        for i in range(self._indiv_list.count()):
+            item = self._indiv_list.item(i)
+            if item is None:
+                continue
+            item.setData(_GRAY_ROLE, None if (filter_mode == "All" or i in self._filtered_set) else True)
+        self._update_filter_counter()
+        self._refresh_nav(self._current_idx)
+
+    def set_annotation_indicator(self, idx: int, value: str) -> None:
+        item = self._indiv_list.item(idx)
+        if item is not None:
+            item.setData(_ANNOT_ROLE, value or None)
+
+    def set_all_annotation_indicators(self, indicators: dict) -> None:
+        for i in range(self._indiv_list.count()):
+            item = self._indiv_list.item(i)
+            if item is None:
+                continue
+            v = indicators.get(i, "")
+            item.setData(_ANNOT_ROLE, v or None)
 
     def update_file_availability(self, available: dict[str, bool], loaded: set[str]):
         self._file_available = {ft: available.get(ft, False) for ft in self._file_checks}
@@ -1369,12 +1520,44 @@ class Sidebar(QWidget):
     def checked_file_types(self) -> list[str]:
         return [ft for ft, cb in self._file_checks.items() if cb.isChecked()]
 
+    def _update_filter_counter(self) -> None:
+        row = self._current_idx
+        n = len(self._individuals)
+        if n == 0:
+            self._counter.setText("— / —")
+            return
+        if self._filter_mode == "All":
+            self._counter.setText(f"{row + 1} / {n}" if row >= 0 else "— / —")
+        else:
+            total = len(self._filtered_indices)
+            if row in self._filtered_set:
+                pos = self._filtered_indices.index(row) + 1
+                self._counter.setText(f"{pos} / {total}")
+            else:
+                self._counter.setText(f"— / {total}")
+
+    def _prev_in_filter(self) -> int | None:
+        if self._filter_mode == "All":
+            return self._current_idx - 1 if self._current_idx > 0 else None
+        for idx in reversed(self._filtered_indices):
+            if idx < self._current_idx:
+                return idx
+        return None
+
+    def _next_in_filter(self) -> int | None:
+        if self._filter_mode == "All":
+            n = len(self._individuals)
+            return self._current_idx + 1 if 0 <= self._current_idx < n - 1 else None
+        for idx in self._filtered_indices:
+            if idx > self._current_idx:
+                return idx
+        return None
+
     def _on_row_changed(self, row: int):
         if row < 0:
             return
         self._current_idx = row
-        n = len(self._individuals)
-        self._counter.setText(f"{row + 1} / {n}")
+        self._update_filter_counter()
         self._refresh_nav(row)
         if self._nav_triggered or self._loaded_idx >= 0:
             self._nav_triggered = False
@@ -1382,16 +1565,17 @@ class Sidebar(QWidget):
             self.individual_selected.emit(row)
 
     def _go_prev(self):
-        if self._current_idx > 0:
+        prev_idx = self._prev_in_filter()
+        if prev_idx is not None:
             self._nav_triggered = True
-            self._indiv_list.setCurrentRow(self._current_idx - 1)
+            self._indiv_list.setCurrentRow(prev_idx)
 
     def _go_next(self):
-        if self._current_idx < len(self._individuals) - 1:
+        next_idx = self._next_in_filter()
+        if next_idx is not None:
             self._nav_triggered = True
-            self._indiv_list.setCurrentRow(self._current_idx + 1)
+            self._indiv_list.setCurrentRow(next_idx)
 
     def _refresh_nav(self, row: int):
-        n = len(self._individuals)
-        self._prev_btn.setEnabled(row > 0)
-        self._next_btn.setEnabled(0 <= row < n - 1)
+        self._prev_btn.setEnabled(self._prev_in_filter() is not None)
+        self._next_btn.setEnabled(self._next_in_filter() is not None)

@@ -386,6 +386,7 @@ class MainWindow(QMainWindow):
 
         self._sidebar.annotation_changed.connect(self._on_annotation_changed)
         self._sidebar.annotation_note_changed.connect(self._on_annotation_note_changed)
+        self._sidebar.filter_changed.connect(self._on_filter_changed)
         self._sidebar.export_tags_requested.connect(self._on_export_tags)
         self._sidebar.tags_visible_changed.connect(self._viewer.set_tags_visible)
         self._sidebar.tag_selected.connect(self._on_tag_selected)
@@ -531,6 +532,7 @@ class MainWindow(QMainWindow):
             FILE_TYPE_ORDER,
         )
         self._sidebar.load_individuals(self._individuals)
+        self._init_annotation_indicators()
         if not self._individuals:
             return
         self._current_idx = 0
@@ -559,6 +561,7 @@ class MainWindow(QMainWindow):
             FILE_TYPE_ORDER,
         )
         self._sidebar.load_individuals(self._individuals)
+        self._init_annotation_indicators()
         if not self._individuals:
             self._current_idx = -1
             return
@@ -648,6 +651,7 @@ class MainWindow(QMainWindow):
         available = {ft: (ft in resolved) for ft in FILE_TYPE_ORDER}
         self._sidebar.update_file_availability(available, set(resolved.keys()))
         self._sidebar.load_individuals([ind])
+        self._init_annotation_indicators()
         self._sidebar.select_individual_silent(0)
         self._sidebar.update_tag_list([], "")
 
@@ -692,6 +696,7 @@ class MainWindow(QMainWindow):
         available = {ft: (ft in file_paths) for ft in FILE_TYPE_ORDER}
         self._sidebar.update_file_availability(available, set(file_paths.keys()))
         self._sidebar.load_individuals([ind])
+        self._init_annotation_indicators()
         self._sidebar.select_individual_silent(0)
         self._sidebar.update_tag_list([], "")
 
@@ -882,10 +887,25 @@ class MainWindow(QMainWindow):
     def _start_preload(self, current_idx: int):
         self._cancel_preloaders()
         n = len(self._individuals)
-        forward  = range(current_idx + 1, min(current_idx + _PRELOAD_AHEAD + 1, n))
-        backward = range(max(0, current_idx - _PRELOAD_BEHIND), current_idx)
-        self._preload_queue = [i for i in list(forward) + list(backward)
-                               if i not in self._preload_cache]
+        mode = self._sidebar.filter_mode
+        if mode == "All":
+            forward  = range(current_idx + 1, min(current_idx + _PRELOAD_AHEAD + 1, n))
+            backward = range(max(0, current_idx - _PRELOAD_BEHIND), current_idx)
+            candidates = list(forward) + list(backward)
+        else:
+            filtered = self._sidebar.filtered_indices
+            try:
+                pos = filtered.index(current_idx)
+            except ValueError:
+                pos = -1
+            if pos >= 0:
+                ahead  = filtered[pos + 1: pos + 1 + _PRELOAD_AHEAD]
+                behind = filtered[max(0, pos - _PRELOAD_BEHIND): pos]
+            else:
+                ahead  = filtered[:_PRELOAD_AHEAD]
+                behind = []
+            candidates = list(ahead) + list(behind)
+        self._preload_queue = [i for i in candidates if i not in self._preload_cache]
         self._start_next_preload()
 
     def _start_next_preload(self):
@@ -1254,11 +1274,48 @@ class MainWindow(QMainWindow):
                         pass
         self._notifs.show("Tags cleared", f"Removed tags from {deleted} file(s)", "info")
 
+    def _annotation_summary(self, ind: Individual) -> str:
+        """Worst-case annotation across all file types: Fail > Review > Pass > ''."""
+        vals = set(self._annot_mgr.get_row(ind.oldname).values())
+        if "Fail"   in vals: return "Fail"
+        if "Review" in vals: return "Review"
+        if "Pass"   in vals: return "Pass"
+        return ""
+
+    def _init_annotation_indicators(self) -> None:
+        indicators = {i: self._annotation_summary(ind)
+                      for i, ind in enumerate(self._individuals)}
+        self._sidebar.set_all_annotation_indicators(indicators)
+
+    def _on_filter_changed(self, mode: str) -> None:
+        if not self._individuals:
+            return
+        matching = self._compute_filter_matches(mode)
+        self._sidebar.apply_filter(mode, matching)
+        if self._current_idx >= 0:
+            self._start_preload(self._current_idx)
+
+    def _compute_filter_matches(self, mode: str) -> list[int]:
+        if mode == "All":
+            return list(range(len(self._individuals)))
+        return [
+            i for i, ind in enumerate(self._individuals)
+            if any(v == mode for v in self._annot_mgr.get_row(ind.oldname).values())
+        ]
+
+    def _refresh_active_filter(self) -> None:
+        mode = self._sidebar.filter_mode
+        if mode != "All" and self._individuals:
+            matching = self._compute_filter_matches(mode)
+            self._sidebar.apply_filter(mode, matching)
+
     def _on_annotation_changed(self, ft: str, value: str) -> None:
         if self._current_idx < 0:
             return
         ind = self._individuals[self._current_idx]
         self._annot_mgr.set(ind.oldname, ft, value)
+        self._sidebar.set_annotation_indicator(self._current_idx, self._annotation_summary(ind))
+        self._refresh_active_filter()
 
     def _on_annotation_note_changed(self, text: str) -> None:
         if self._current_idx < 0:
