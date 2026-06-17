@@ -35,7 +35,7 @@ _FILE_SPECS: dict[str, tuple[str, list[str], int | None]] = {
     'rdn_seg':    ('01_Seg',      ['{oldname}_reoriented_cropped_RDN_seg.mhd',
                                    '{oldname}_cropped_RDN_seg.mhd',
                                    '{oldname}_reoriented_RDN_seg.mhd',
-                                   '{oldname}_RDN_seg.mhd'],                                                    1),
+                                   '{oldname}_RDN_seg.mhd'],                                                  255),
     'close':      ('02_Close',    ['{name}_Close_kc{kc}_{kpoint}.mhd'],                                        1),
     'outer':      ('03_OuterMask',['{name}_OuterMask_kc{kc}_{kpoint}_kout{kout}.mhd',
                                    '{name}_OuterMask.mhd'],                                                     1),
