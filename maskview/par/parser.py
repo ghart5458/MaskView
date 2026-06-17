@@ -113,3 +113,41 @@ def parse_file(path: str | Path) -> list[Individual]:
     if path.suffix.lower() == '.csv':
         return parse_csv(path)
     return parse_par(path)
+
+
+def parse_file_entries(path: str | Path) -> list[tuple[str, bool]]:
+    """Return (oldname, is_active) for every data row in PAR order.
+
+    Commented-out rows (first field starts with #) are included with
+    is_active=False so the export CSV can mirror the PAR exactly.
+    """
+    text = Path(path).read_text(encoding='utf-8-sig')
+    lines = text.splitlines()
+    header_line = next((l for l in lines if l.strip()), None)
+    if header_line is None:
+        return []
+    delim = _detect_delim(header_line)
+    reader = csv.reader(lines, delimiter=delim)
+    raw_headers = next(reader, None)
+    if not raw_headers:
+        return []
+    headers = [h.lstrip('$').strip() for h in raw_headers]
+    try:
+        oldname_col = headers.index('oldname')
+    except ValueError:
+        return []
+
+    entries: list[tuple[str, bool]] = []
+    for row_fields in reader:
+        if not row_fields or not any(f.strip() for f in row_fields):
+            continue
+        first = row_fields[0].lstrip()
+        is_commented = first.startswith('#')
+        row_fields = [f.strip() for f in row_fields]
+        if is_commented:
+            row_fields[0] = first.lstrip('#').strip()
+        if oldname_col < len(row_fields):
+            oldname = row_fields[oldname_col]
+            if oldname:
+                entries.append((oldname, not is_commented))
+    return entries

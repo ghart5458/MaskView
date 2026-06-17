@@ -23,11 +23,20 @@ class AnnotationManager:
         self._columns: list[str] = []
         self._data: dict[str, dict[str, str]] = {}  # oldname → {ft: value}
         self._notes: dict[str, str] = {}             # oldname → note text
+        self._all_entries: list[tuple[str, bool]] = []  # (oldname, is_active) in PAR order
 
-    def load(self, par_path: Path, oldnames: list[str], file_types: list[str]) -> None:
-        """Load or initialise annotations from the default sidecar CSV."""
+    def load(self, par_path: Path, oldnames: list[str], file_types: list[str],
+             all_entries: list[tuple[str, bool]] | None = None) -> None:
+        """Load or initialise annotations from the default sidecar CSV.
+
+        all_entries is the full (oldname, is_active) list from parse_file_entries,
+        including commented-out individuals.  When omitted only active rows are tracked.
+        """
         self._path = par_path.parent / (par_path.stem + "_annotations.csv")
         self._columns = list(file_types)
+        self._all_entries = all_entries if all_entries is not None else [
+            (name, True) for name in oldnames
+        ]
         if self._path.exists():
             self._read(oldnames)
         else:
@@ -68,14 +77,24 @@ class AnnotationManager:
                 self._notes[oldname] = ""
 
     def export(self, path: Path) -> None:
-        """Write all annotations to *path*.  Raises on I/O error."""
+        """Write all annotations to *path* in PAR order.  Raises on I/O error.
+
+        Active individuals are written with their annotations.  Commented-out
+        individuals are written with '#oldname' and blank annotation columns,
+        mirroring the structure of the source PAR file.
+        """
         fieldnames = ["oldname"] + self._columns + ["notes"]
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
             writer.writeheader()
-            for oldname, annots in self._data.items():
-                row = {"oldname": oldname, "notes": self._notes.get(oldname, "")}
-                row.update({ft: annots.get(ft, "") for ft in self._columns})
+            for oldname, is_active in self._all_entries:
+                if is_active:
+                    row = {"oldname": oldname, "notes": self._notes.get(oldname, "")}
+                    row.update({ft: self._data.get(oldname, {}).get(ft, "")
+                                for ft in self._columns})
+                else:
+                    row = {"oldname": f"#{oldname}", "notes": ""}
+                    row.update({ft: "" for ft in self._columns})
                 writer.writerow(row)
 
     # ── Internal ──────────────────────────────────────────────────────────────

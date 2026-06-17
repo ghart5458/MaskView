@@ -17,7 +17,7 @@ from ..files.resolver import (
     FILE_TYPE_LABELS, FILE_TYPE_ORDER, display_max, resolve_file,
     resolve_file_from_scan, infer_file_type_from_path,
 )
-from ..par.parser import Individual, parse_file
+from ..par.parser import Individual, parse_file, parse_file_entries
 from .annotations import AnnotationManager
 from .composite_panel import COMPOSITE_TYPE, OverlaySpec
 from .multi_viewer import MultiViewer
@@ -622,6 +622,7 @@ class MainWindow(QMainWindow):
             path,
             [ind.oldname for ind in self._individuals],
             FILE_TYPE_ORDER,
+            all_entries=parse_file_entries(path),
         )
         self._sidebar.load_individuals(self._individuals)
         self._init_annotation_indicators()
@@ -672,6 +673,7 @@ class MainWindow(QMainWindow):
             self._par_path,
             [ind.oldname for ind in self._individuals],
             FILE_TYPE_ORDER,
+            all_entries=parse_file_entries(self._par_path),
         )
         self._sidebar.load_individuals(self._individuals)
         self._init_annotation_indicators()
