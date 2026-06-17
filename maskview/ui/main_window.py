@@ -7,7 +7,7 @@ from PyQt6.QtCore import QThread, QTimer, pyqtSignal
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import (
-    QCheckBox, QDialog, QFileDialog, QHBoxLayout, QLabel, QMainWindow,
+    QCheckBox, QDialog, QHBoxLayout, QLabel, QMainWindow,
     QMessageBox, QPushButton, QSplitter, QVBoxLayout, QWidget,
 )
 
@@ -477,7 +477,6 @@ class MainWindow(QMainWindow):
         self._sidebar.annotation_changed.connect(self._on_annotation_changed)
         self._sidebar.annotation_note_changed.connect(self._on_annotation_note_changed)
         self._sidebar.filter_changed.connect(self._on_filter_changed)
-        self._sidebar.export_annotations_requested.connect(self._on_annotations_export)
         self._sidebar.clear_annotations_requested.connect(self._on_annotations_clear_all)
         self._sidebar.export_tags_requested.connect(self._on_export_tags)
         self._sidebar.tags_visible_changed.connect(self._viewer.set_tags_visible)
@@ -1412,24 +1411,6 @@ class MainWindow(QMainWindow):
                     except Exception:
                         pass
         self._notifs.show("Tags cleared", f"Removed tags from {deleted} file(s)", "info")
-
-    def _on_annotations_export(self) -> None:
-        default_path = self._annot_mgr.default_export_path()
-        if default_path is None:
-            default_path = Path("annotations.csv")
-        path_str, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export annotations",
-            str(default_path),
-            "CSV files (*.csv);;All files (*)",
-        )
-        if not path_str:
-            return
-        try:
-            self._annot_mgr.export(Path(path_str))
-            self._notifs.show("Annotations exported", Path(path_str).name, "info")
-        except Exception as e:
-            self._notifs.show("Export failed", str(e), "warning")
 
     def _on_annotations_clear_all(self) -> None:
         if not self._individuals:

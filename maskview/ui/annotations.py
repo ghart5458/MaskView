@@ -47,17 +47,19 @@ class AnnotationManager:
         return self._path
 
     def set(self, oldname: str, file_type: str, value: str) -> None:
-        """Record an annotation in memory. Pass '' to clear."""
+        """Record an annotation and auto-save to the sidecar CSV."""
         if oldname not in self._data:
             self._data[oldname] = {}
         if value:
             self._data[oldname][file_type] = value
         else:
             self._data[oldname].pop(file_type, None)
+        self._write()
 
     def set_note(self, oldname: str, text: str) -> None:
-        """Store a free-text note for one individual in memory."""
+        """Store a free-text note for one individual and auto-save."""
         self._notes[oldname] = text
+        self._write()
 
     def get_row(self, oldname: str) -> dict[str, str]:
         """Return all annotations for one individual as {file_type: value}."""
@@ -98,6 +100,14 @@ class AnnotationManager:
                 writer.writerow(row)
 
     # ── Internal ──────────────────────────────────────────────────────────────
+
+    def _write(self) -> None:
+        if self._path is None:
+            return
+        try:
+            self.export(self._path)
+        except Exception:
+            pass
 
     def _read(self, oldnames: list[str]) -> None:
         self._data  = {}

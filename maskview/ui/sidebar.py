@@ -338,7 +338,6 @@ class Sidebar(QWidget):
     annotation_changed      = pyqtSignal(str, str)  # (file_type, value: "Pass"/"Review"/"Fail"/"")
     annotation_note_changed = pyqtSignal(str)        # note text for current individual
     filter_changed          = pyqtSignal(str)        # "All", "Pass", "Review", "Fail"
-    export_annotations_requested = pyqtSignal()
     clear_annotations_requested  = pyqtSignal()
     export_tags_requested   = pyqtSignal()
     tags_visible_changed      = pyqtSignal(bool)
@@ -365,7 +364,6 @@ class Sidebar(QWidget):
         self._filtered_indices: list[int] = []
         self._filtered_set: set[int] = set()
         self._filter_btns: dict[str, QPushButton] = {}
-        self._export_annot_btn: QPushButton | None = None
         self._clear_all_annot_btn: QPushButton | None = None
 
         self._setup_ui()
@@ -990,8 +988,8 @@ class Sidebar(QWidget):
     def _build_annotations_section(self, file_types: list[str]):
         body = self._sec_annot.body
 
-        # ── One-time: build stable Export / Clear buttons at the bottom ──────
-        if self._export_annot_btn is None:
+        # ── One-time: build stable Clear button at the bottom ────────────────
+        if self._clear_all_annot_btn is None:
             body.setContentsMargins(8, 8, 8, 6)
             body.setSpacing(4)
 
@@ -1005,13 +1003,6 @@ class Sidebar(QWidget):
 
             body.addWidget(_sep())
 
-            _btn_style_green = (
-                "QPushButton { background: #1a3d26; color: #5fd49a;"
-                " border: 1px solid #2e6e42;"
-                " border-radius: 3px; padding: 4px 8px; font-size: 12px; }"
-                "QPushButton:hover { background: #147a3f; color: #fff; border-color: #3a8a52; }"
-                "QPushButton:disabled { background: #1a1a1a; color: #3a3a3a; border-color: #252525; }"
-            )
             _btn_style_yellow = (
                 "QPushButton { background: #2a2410; color: #d4c45e;"
                 " border: 1px solid #6e5e20;"
@@ -1019,12 +1010,6 @@ class Sidebar(QWidget):
                 "QPushButton:hover { background: #3a3418; color: #ffe066; border-color: #9e8a1a; }"
                 "QPushButton:disabled { background: #1a1a1a; color: #3a3a3a; border-color: #252525; }"
             )
-
-            self._export_annot_btn = QPushButton("Export annotations for all individuals")
-            self._export_annot_btn.setStyleSheet(_btn_style_green)
-            self._export_annot_btn.setEnabled(False)
-            self._export_annot_btn.clicked.connect(self.export_annotations_requested)
-            body.addWidget(self._export_annot_btn)
 
             self._clear_all_annot_btn = QPushButton("Clear annotations for all individuals")
             self._clear_all_annot_btn.setStyleSheet(_btn_style_yellow)
@@ -1389,8 +1374,6 @@ class Sidebar(QWidget):
             self._export_tags_btn.setText("Export tags for all individuals")
             self._export_tags_btn.setStyleSheet(self._export_btn_normal_style)
         self._clear_all_tags_btn.setEnabled(has_par)
-        if self._export_annot_btn is not None:
-            self._export_annot_btn.setEnabled(has_par)
         if self._clear_all_annot_btn is not None:
             self._clear_all_annot_btn.setEnabled(has_par)
 
