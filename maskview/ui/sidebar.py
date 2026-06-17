@@ -338,6 +338,8 @@ class Sidebar(QWidget):
     annotation_changed      = pyqtSignal(str, str)  # (file_type, value: "Pass"/"Review"/"Fail"/"")
     annotation_note_changed = pyqtSignal(str)        # note text for current individual
     filter_changed          = pyqtSignal(str)        # "All", "Pass", "Review", "Fail"
+    export_annotations_requested = pyqtSignal()
+    clear_annotations_requested  = pyqtSignal()
     export_tags_requested   = pyqtSignal()
     tags_visible_changed      = pyqtSignal(bool)
     tag_selected              = pyqtSignal(str, int, int, int, str)  # (file_type, x, y, z, tag_id)
@@ -363,6 +365,8 @@ class Sidebar(QWidget):
         self._filtered_indices: list[int] = []
         self._filtered_set: set[int] = set()
         self._filter_btns: dict[str, QPushButton] = {}
+        self._export_annot_btn: QPushButton | None = None
+        self._clear_all_annot_btn: QPushButton | None = None
 
         self._setup_ui()
         self.setMinimumWidth(0)
@@ -985,8 +989,54 @@ class Sidebar(QWidget):
 
     def _build_annotations_section(self, file_types: list[str]):
         body = self._sec_annot.body
-        body.setContentsMargins(8, 8, 8, 6)
-        body.setSpacing(4)
+
+        # ── One-time: build stable Export / Clear buttons at the bottom ──────
+        if self._export_annot_btn is None:
+            body.setContentsMargins(8, 8, 8, 6)
+            body.setSpacing(4)
+
+            # Container for the dynamic (per-file-type + note) content
+            self._annot_dynamic_widget = QWidget()
+            self._annot_dynamic_widget.setStyleSheet("background: transparent;")
+            self._annot_dynamic_layout = QVBoxLayout(self._annot_dynamic_widget)
+            self._annot_dynamic_layout.setContentsMargins(0, 0, 0, 0)
+            self._annot_dynamic_layout.setSpacing(4)
+            body.addWidget(self._annot_dynamic_widget)
+
+            body.addWidget(_sep())
+
+            _btn_style_green = (
+                "QPushButton { background: #1a3d26; color: #5fd49a;"
+                " border: 1px solid #2e6e42;"
+                " border-radius: 3px; padding: 4px 8px; font-size: 12px; }"
+                "QPushButton:hover { background: #147a3f; color: #fff; border-color: #3a8a52; }"
+                "QPushButton:disabled { background: #1a1a1a; color: #3a3a3a; border-color: #252525; }"
+            )
+            _btn_style_yellow = (
+                "QPushButton { background: #2a2410; color: #d4c45e;"
+                " border: 1px solid #6e5e20;"
+                " border-radius: 3px; padding: 4px 8px; font-size: 12px; }"
+                "QPushButton:hover { background: #3a3418; color: #ffe066; border-color: #9e8a1a; }"
+                "QPushButton:disabled { background: #1a1a1a; color: #3a3a3a; border-color: #252525; }"
+            )
+
+            self._export_annot_btn = QPushButton("Export annotations for all individuals")
+            self._export_annot_btn.setStyleSheet(_btn_style_green)
+            self._export_annot_btn.setEnabled(False)
+            self._export_annot_btn.clicked.connect(self.export_annotations_requested)
+            body.addWidget(self._export_annot_btn)
+
+            self._clear_all_annot_btn = QPushButton("Clear annotations for all individuals")
+            self._clear_all_annot_btn.setStyleSheet(_btn_style_yellow)
+            self._clear_all_annot_btn.setEnabled(False)
+            self._clear_all_annot_btn.setToolTip(
+                "Selectively clear annotation data across every individual"
+            )
+            self._clear_all_annot_btn.clicked.connect(self.clear_annotations_requested)
+            body.addWidget(self._clear_all_annot_btn)
+
+        # ── Rebuild the dynamic (per-file-type rows + note) part ─────────────
+        dyn = self._annot_dynamic_layout
 
         # Preserve unsaved note text only when rebuilding for the same individual
         # (e.g. second file finishes loading while user is mid-sentence). Discard
@@ -996,8 +1046,8 @@ class Sidebar(QWidget):
             _draft = self._note_edit.toPlainText()
         self._note_draft_idx = self._current_idx
 
-        while body.count():
-            item = body.takeAt(0)
+        while dyn.count():
+            item = dyn.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
         self._annot_groups.clear()
@@ -1005,7 +1055,7 @@ class Sidebar(QWidget):
         if not file_types:
             lbl = QLabel("No panels open")
             lbl.setStyleSheet("color: #666; font-size: 13px;")
-            body.addWidget(lbl)
+            dyn.addWidget(lbl)
 
         for ft in file_types:
             row_w = QWidget()
@@ -1039,12 +1089,12 @@ class Sidebar(QWidget):
                 rrow.addWidget(btn)
 
             self._annot_groups[ft] = group
-            body.addWidget(row_w)
+            dyn.addWidget(row_w)
 
-        body.addWidget(_sep())
+        dyn.addWidget(_sep())
         note_lbl = QLabel("Individual note:")
         note_lbl.setStyleSheet("color: #888; font-size: 12px; padding: 2px 0 1px 0;")
-        body.addWidget(note_lbl)
+        dyn.addWidget(note_lbl)
 
         self._note_edit = QPlainTextEdit()
         self._note_edit.setFixedHeight(48)   # ~2 lines
@@ -1055,7 +1105,7 @@ class Sidebar(QWidget):
         )
         if _draft:
             self._note_edit.setPlainText(_draft)
-        body.addWidget(self._note_edit)
+        dyn.addWidget(self._note_edit)
 
         _save_normal = (
             "QPushButton { background: #1a3d26; color: #5fd49a;"
@@ -1083,7 +1133,7 @@ class Sidebar(QWidget):
 
         self._note_save_btn.clicked.connect(_on_save_note)
         self._note_edit.textChanged.connect(_on_note_text_changed)
-        body.addWidget(self._note_save_btn)
+        dyn.addWidget(self._note_save_btn)
 
     def _build_filter_row(self) -> QWidget:
         row = QWidget()
@@ -1317,6 +1367,13 @@ class Sidebar(QWidget):
         self._note_edit.setPlainText(text)
         self._note_edit.blockSignals(False)
 
+    def force_clear_annotation_note(self) -> None:
+        """Force-clear the note box (used after a bulk note clear)."""
+        self._note_edit.blockSignals(True)
+        self._note_edit.setPlainText("")
+        self._note_edit.blockSignals(False)
+        self._note_draft_idx = -1
+
     def set_par_label(self, path: Path | None):
         has_par = path is not None
         if not has_par:
@@ -1332,6 +1389,10 @@ class Sidebar(QWidget):
             self._export_tags_btn.setText("Export tags for all individuals")
             self._export_tags_btn.setStyleSheet(self._export_btn_normal_style)
         self._clear_all_tags_btn.setEnabled(has_par)
+        if self._export_annot_btn is not None:
+            self._export_annot_btn.setEnabled(has_par)
+        if self._clear_all_annot_btn is not None:
+            self._clear_all_annot_btn.setEnabled(has_par)
 
     def update_tag_list(self, tags: list, file_type: str) -> None:
         self._tag_list_file_type = file_type

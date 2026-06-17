@@ -7,12 +7,15 @@ VALUE_TO_BTN = {v: k for k, v in BTN_TO_VALUE.items()}
 
 
 class AnnotationManager:
-    """Per-individual, per-file-type annotations persisted to a CSV alongside the PAR file.
+    """Per-individual, per-file-type annotations held in memory.
+
+    Annotations are loaded from a CSV on PAR open (if one exists) and written
+    only when the user explicitly calls export().  This means the CSV is never
+    silently modified during a session.
 
     CSV layout: one row per individual, columns are 'oldname', one column per
-    file type (e.g. 'original', 'maskseg'), then 'notes'. Values for file-type
-    columns: 'Pass', 'Review', 'Fail', or blank. Written immediately on every
-    change.
+    file type (e.g. 'original', 'maskseg'), then 'notes'.
+    Values for file-type columns: 'Pass', 'Review', 'Fail', or blank.
     """
 
     def __init__(self):
@@ -22,7 +25,7 @@ class AnnotationManager:
         self._notes: dict[str, str] = {}             # oldname → note text
 
     def load(self, par_path: Path, oldnames: list[str], file_types: list[str]) -> None:
-        """Load or create the annotations CSV. Called when a PAR file is opened."""
+        """Load or initialise annotations from the default sidecar CSV."""
         self._path = par_path.parent / (par_path.stem + "_annotations.csv")
         self._columns = list(file_types)
         if self._path.exists():
@@ -31,20 +34,21 @@ class AnnotationManager:
             self._data  = {name: {} for name in oldnames}
             self._notes = {name: "" for name in oldnames}
 
+    def default_export_path(self) -> Path | None:
+        return self._path
+
     def set(self, oldname: str, file_type: str, value: str) -> None:
-        """Record an annotation and persist to disk. Pass '' to clear."""
+        """Record an annotation in memory. Pass '' to clear."""
         if oldname not in self._data:
             self._data[oldname] = {}
         if value:
             self._data[oldname][file_type] = value
         else:
             self._data[oldname].pop(file_type, None)
-        self._write()
 
     def set_note(self, oldname: str, text: str) -> None:
-        """Save a free-text note for one individual and persist to disk."""
+        """Store a free-text note for one individual in memory."""
         self._notes[oldname] = text
-        self._write()
 
     def get_row(self, oldname: str) -> dict[str, str]:
         """Return all annotations for one individual as {file_type: value}."""
@@ -53,6 +57,26 @@ class AnnotationManager:
     def get_note(self, oldname: str) -> str:
         """Return the saved note text for one individual (empty string if none)."""
         return self._notes.get(oldname, "")
+
+    def clear_file_types(self, file_types: list[str], clear_notes: bool = False) -> None:
+        """Clear selected file-type annotations (and optionally notes) for all individuals."""
+        for annots in self._data.values():
+            for ft in file_types:
+                annots.pop(ft, None)
+        if clear_notes:
+            for oldname in self._notes:
+                self._notes[oldname] = ""
+
+    def export(self, path: Path) -> None:
+        """Write all annotations to *path*.  Raises on I/O error."""
+        fieldnames = ["oldname"] + self._columns + ["notes"]
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+            writer.writeheader()
+            for oldname, annots in self._data.items():
+                row = {"oldname": oldname, "notes": self._notes.get(oldname, "")}
+                row.update({ft: annots.get(ft, "") for ft in self._columns})
+                writer.writerow(row)
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
@@ -78,18 +102,3 @@ class AnnotationManager:
                 self._data[name]  = {}
             if name not in self._notes:
                 self._notes[name] = ""
-
-    def _write(self) -> None:
-        if self._path is None:
-            return
-        try:
-            fieldnames = ["oldname"] + self._columns + ["notes"]
-            with open(self._path, "w", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
-                writer.writeheader()
-                for oldname, annots in self._data.items():
-                    row = {"oldname": oldname, "notes": self._notes.get(oldname, "")}
-                    row.update({ft: annots.get(ft, "") for ft in self._columns})
-                    writer.writerow(row)
-        except Exception:
-            pass

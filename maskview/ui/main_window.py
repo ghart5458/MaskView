@@ -7,8 +7,8 @@ from PyQt6.QtCore import QThread, QTimer, pyqtSignal
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import (
-    QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton,
-    QSplitter, QVBoxLayout, QWidget,
+    QCheckBox, QDialog, QFileDialog, QHBoxLayout, QLabel, QMainWindow,
+    QMessageBox, QPushButton, QSplitter, QVBoxLayout, QWidget,
 )
 
 from .. import settings as _settings
@@ -297,6 +297,96 @@ class _SessionRestoreOverlay(QWidget):
         painter.fillRect(self.rect(), QColor(0, 0, 0, 160))
 
 
+# ── Selective-clear dialog ────────────────────────────────────────────────────
+
+class _SelectiveClearDialog(QDialog):
+    """Checkbox dialog for picking which file-type categories to wipe."""
+
+    def __init__(
+        self,
+        file_types: list[str],
+        labels: dict[str, str],
+        *,
+        include_notes: bool = False,
+        title: str = "Clear data",
+        warning_text: str = "This action cannot be undone.",
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(340)
+        self.setStyleSheet("QDialog { background: #1e1e1e; color: #ddd; }")
+
+        self.selected_file_types: list[str] = []
+        self.clear_notes: bool = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setSpacing(8)
+
+        warn = QLabel(warning_text)
+        warn.setWordWrap(True)
+        warn.setStyleSheet("color: #c8a84a; font-size: 12px;")
+        layout.addWidget(warn)
+
+        prompt = QLabel("Select what to delete:")
+        prompt.setStyleSheet("color: #ccc; font-size: 12px; margin-top: 4px;")
+        layout.addWidget(prompt)
+
+        self._checkboxes: dict[str, QCheckBox] = {}
+        for ft in file_types:
+            cb = QCheckBox(labels.get(ft, ft))
+            cb.setStyleSheet(
+                "QCheckBox { color: #ddd; font-size: 12px; spacing: 6px; }"
+            )
+            layout.addWidget(cb)
+            self._checkboxes[ft] = cb
+
+        if include_notes:
+            self._notes_cb = QCheckBox("Individual notes")
+            self._notes_cb.setStyleSheet(
+                "QCheckBox { color: #ddd; font-size: 12px; spacing: 6px; }"
+            )
+            layout.addWidget(self._notes_cb)
+        else:
+            self._notes_cb = None
+
+        layout.addSpacing(6)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        btn_row.addStretch()
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setStyleSheet(
+            "QPushButton { background: #252525; color: #888; border: 1px solid #3a3a3a;"
+            " border-radius: 3px; padding: 5px 14px; font-size: 12px; }"
+            "QPushButton:hover { background: #303030; color: #ccc; }"
+        )
+        cancel_btn.clicked.connect(self.reject)
+
+        clear_btn = QPushButton("Clear selected")
+        clear_btn.setStyleSheet(
+            "QPushButton { background: #3d1a1a; color: #cc3333; border: 1px solid #6e2e2e;"
+            " border-radius: 3px; padding: 5px 14px; font-size: 12px; }"
+            "QPushButton:hover { background: #5a1a1a; color: #ff5555; border: none; }"
+        )
+        clear_btn.clicked.connect(self._on_clear)
+
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(clear_btn)
+        layout.addLayout(btn_row)
+
+    def _on_clear(self):
+        self.selected_file_types = [
+            ft for ft, cb in self._checkboxes.items() if cb.isChecked()
+        ]
+        self.clear_notes = self._notes_cb is not None and self._notes_cb.isChecked()
+        if not self.selected_file_types and not self.clear_notes:
+            return
+        self.accept()
+
+
 # ── Main window ───────────────────────────────────────────────────────────────
 
 class MainWindow(QMainWindow):
@@ -387,6 +477,8 @@ class MainWindow(QMainWindow):
         self._sidebar.annotation_changed.connect(self._on_annotation_changed)
         self._sidebar.annotation_note_changed.connect(self._on_annotation_note_changed)
         self._sidebar.filter_changed.connect(self._on_filter_changed)
+        self._sidebar.export_annotations_requested.connect(self._on_annotations_export)
+        self._sidebar.clear_annotations_requested.connect(self._on_annotations_clear_all)
         self._sidebar.export_tags_requested.connect(self._on_export_tags)
         self._sidebar.tags_visible_changed.connect(self._viewer.set_tags_visible)
         self._sidebar.tag_selected.connect(self._on_tag_selected)
@@ -1287,20 +1379,26 @@ class MainWindow(QMainWindow):
     def _on_tags_clear_all(self) -> None:
         if not self._individuals:
             return
-        reply = QMessageBox.question(
-            self,
-            "Clear all tags",
-            "This will permanently delete all tags for every individual and file type.\n\nContinue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
+        dlg = _SelectiveClearDialog(
+            FILE_TYPE_ORDER,
+            FILE_TYPE_LABELS,
+            include_notes=False,
+            title="Clear all tags",
+            warning_text=(
+                "This will permanently remove tag JSON files from disk for every individual "
+                "in the selected file types. This cannot be undone."
+            ),
+            parent=self,
         )
-        if reply != QMessageBox.StandardButton.Yes:
+        if dlg.exec() != QDialog.DialogCode.Accepted:
             return
+        fts_to_clear = set(dlg.selected_file_types)
         for panel in self._viewer.panels:
-            panel.clear_tags()
+            if panel.file_type in fts_to_clear:
+                panel.clear_tags()
         deleted = 0
         for ind in self._individuals:
-            for ft in FILE_TYPE_ORDER:
+            for ft in fts_to_clear:
                 vol_path = resolve_file(ind, ft)
                 if vol_path is None:
                     continue
@@ -1312,6 +1410,57 @@ class MainWindow(QMainWindow):
                     except Exception:
                         pass
         self._notifs.show("Tags cleared", f"Removed tags from {deleted} file(s)", "info")
+
+    def _on_annotations_export(self) -> None:
+        default_path = self._annot_mgr.default_export_path()
+        if default_path is None:
+            default_path = Path("annotations.csv")
+        path_str, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export annotations",
+            str(default_path),
+            "CSV files (*.csv);;All files (*)",
+        )
+        if not path_str:
+            return
+        try:
+            self._annot_mgr.export(Path(path_str))
+            self._notifs.show("Annotations exported", Path(path_str).name, "info")
+        except Exception as e:
+            self._notifs.show("Export failed", str(e), "warning")
+
+    def _on_annotations_clear_all(self) -> None:
+        if not self._individuals:
+            return
+        dlg = _SelectiveClearDialog(
+            FILE_TYPE_ORDER,
+            FILE_TYPE_LABELS,
+            include_notes=True,
+            title="Clear annotations",
+            warning_text=(
+                "This will permanently delete the selected annotation categories "
+                "for every individual in memory. This cannot be undone."
+            ),
+            parent=self,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        fts = dlg.selected_file_types
+        clear_notes = dlg.clear_notes
+        self._annot_mgr.clear_file_types(fts, clear_notes=clear_notes)
+        self._init_annotation_indicators()
+        if 0 <= self._current_idx < len(self._individuals):
+            ind = self._individuals[self._current_idx]
+            self._sidebar.set_annotations(self._annot_mgr.get_row(ind.oldname))
+            if clear_notes:
+                self._sidebar.force_clear_annotation_note()
+        self._refresh_active_filter()
+        count = len(fts) + (1 if clear_notes else 0)
+        self._notifs.show(
+            "Annotations cleared",
+            f"Cleared {count} categor{'y' if count == 1 else 'ies'} for all individuals",
+            "info",
+        )
 
     def _annotation_summary(self, ind: Individual) -> str:
         """Worst-case annotation across all file types: Fail > Review > Pass > ''."""
