@@ -32,7 +32,10 @@ _FILE_SPECS: dict[str, tuple[str, list[str], int | None]] = {
                                    '{name}_seg_capped.mhd',
                                    '{name}_seg_cropped.mhd',
                                    '{name}_seg.mhd'],                                                          1),
-    'rdn_seg':    ('01_Seg',      ['{oldname}_RDN_seg.mhd'],                                                   1),
+    'rdn_seg':    ('01_Seg',      ['{oldname}_reoriented_cropped_RDN_seg.mhd',
+                                   '{oldname}_cropped_RDN_seg.mhd',
+                                   '{oldname}_reoriented_RDN_seg.mhd',
+                                   '{oldname}_RDN_seg.mhd'],                                                    1),
     'close':      ('02_Close',    ['{name}_Close_kc{kc}_{kpoint}.mhd'],                                        1),
     'outer':      ('03_OuterMask',['{name}_OuterMask_kc{kc}_{kpoint}_kout{kout}.mhd',
                                    '{name}_OuterMask.mhd'],                                                     1),
@@ -149,6 +152,11 @@ def resolve_file_from_scan(base_path: Path, file_type: str) -> Path | None:
         return candidates[0] if candidates else None
     elif file_type == 'rdn_seg':
         candidates = [p for p in candidates if '_RDN_' in p.stem]
+        for suffix in ('_reoriented_cropped_RDN_seg.mhd', '_cropped_RDN_seg.mhd',
+                       '_reoriented_RDN_seg.mhd', '_RDN_seg.mhd'):
+            match = next((p for p in candidates if p.name.endswith(suffix)), None)
+            if match:
+                return match
     elif file_type == 'masksegin':
         candidates = [p for p in candidates if p.stem.endswith('_MaskSegIn')]
     elif file_type == 'masksegout':
