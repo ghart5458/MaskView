@@ -549,11 +549,32 @@ class MainWindow(QMainWindow):
             self._individuals[self._current_idx].oldname
             if 0 <= self._current_idx < len(self._individuals) else None
         )
+        prev_oldname = (
+            self._individuals[self._prev_idx].oldname
+            if self._prev_idx is not None and 0 <= self._prev_idx < len(self._individuals) else None
+        )
+
+        # Stop in-progress preloaders (evicts their partial cache entries).
         self._cancel_preloaders()
+        self._cache_cleanup_timer.stop()
+
+        # Snapshot the completed cache keyed by oldname before clearing index
+        # structures.  Partial entries were already evicted by _cancel_preloaders.
+        cached_by_name = {
+            self._individuals[idx].oldname: data
+            for idx, data in self._preload_cache.items()
+            if 0 <= idx < len(self._individuals)
+        }
+        complete_by_name = {
+            self._individuals[idx].oldname
+            for idx in self._preload_complete
+            if 0 <= idx < len(self._individuals)
+        }
+
         self._preload_cache.clear()
         self._preload_complete.clear()
         self._prev_idx = None
-        self._cache_cleanup_timer.stop()
+
         self._individuals = parse_file(self._par_path)
         self._annot_mgr.load(
             self._par_path,
@@ -562,17 +583,35 @@ class MainWindow(QMainWindow):
         )
         self._sidebar.load_individuals(self._individuals)
         self._init_annotation_indicators()
+
         if not self._individuals:
             self._current_idx = -1
             return
+
+        # Remap surviving cache entries to the new index positions.
+        for new_idx, ind in enumerate(self._individuals):
+            if ind.oldname in cached_by_name:
+                self._preload_cache[new_idx] = cached_by_name[ind.oldname]
+            if ind.oldname in complete_by_name:
+                self._preload_complete.add(new_idx)
+
+        # Remap prev_idx by name so the eviction guard still works.
+        if prev_oldname:
+            for i, ind in enumerate(self._individuals):
+                if ind.oldname == prev_oldname:
+                    self._prev_idx = i
+                    break
+
         if current_oldname:
             for i, ind in enumerate(self._individuals):
                 if ind.oldname == current_oldname:
                     self._current_idx = i
                     self._sidebar.select_individual_silent(i)
+                    self._refresh_preload_indicators()
                     return
         self._current_idx = 0
         self._sidebar.select_individual_silent(0)
+        self._refresh_preload_indicators()
 
     def _on_load_requested(self, idx: int, file_types: list[str]):
         self._session_types = list(file_types)
