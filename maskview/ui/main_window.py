@@ -7,8 +7,8 @@ from PyQt6.QtCore import QThread, QTimer, pyqtSignal
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import (
-    QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton,
-    QSplitter, QVBoxLayout, QWidget,
+    QCheckBox, QDialog, QHBoxLayout, QLabel, QMainWindow,
+    QMessageBox, QPushButton, QSplitter, QVBoxLayout, QWidget,
 )
 
 from .. import settings as _settings
@@ -17,7 +17,7 @@ from ..files.resolver import (
     FILE_TYPE_LABELS, FILE_TYPE_ORDER, display_max, resolve_file,
     resolve_file_from_scan, infer_file_type_from_path,
 )
-from ..par.parser import Individual, parse_file
+from ..par.parser import Individual, parse_file, parse_file_entries
 from .annotations import AnnotationManager
 from .composite_panel import COMPOSITE_TYPE, OverlaySpec
 from .multi_viewer import MultiViewer
@@ -297,6 +297,96 @@ class _SessionRestoreOverlay(QWidget):
         painter.fillRect(self.rect(), QColor(0, 0, 0, 160))
 
 
+# ── Selective-clear dialog ────────────────────────────────────────────────────
+
+class _SelectiveClearDialog(QDialog):
+    """Checkbox dialog for picking which file-type categories to wipe."""
+
+    def __init__(
+        self,
+        file_types: list[str],
+        labels: dict[str, str],
+        *,
+        include_notes: bool = False,
+        title: str = "Clear data",
+        warning_text: str = "This action cannot be undone.",
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(340)
+        self.setStyleSheet("QDialog { background: #1e1e1e; color: #ddd; }")
+
+        self.selected_file_types: list[str] = []
+        self.clear_notes: bool = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setSpacing(8)
+
+        warn = QLabel(warning_text)
+        warn.setWordWrap(True)
+        warn.setStyleSheet("color: #c8a84a; font-size: 12px;")
+        layout.addWidget(warn)
+
+        prompt = QLabel("Select what to delete:")
+        prompt.setStyleSheet("color: #ccc; font-size: 12px; margin-top: 4px;")
+        layout.addWidget(prompt)
+
+        self._checkboxes: dict[str, QCheckBox] = {}
+        for ft in file_types:
+            cb = QCheckBox(labels.get(ft, ft))
+            cb.setStyleSheet(
+                "QCheckBox { color: #ddd; font-size: 12px; spacing: 6px; }"
+            )
+            layout.addWidget(cb)
+            self._checkboxes[ft] = cb
+
+        if include_notes:
+            self._notes_cb = QCheckBox("Individual notes")
+            self._notes_cb.setStyleSheet(
+                "QCheckBox { color: #ddd; font-size: 12px; spacing: 6px; }"
+            )
+            layout.addWidget(self._notes_cb)
+        else:
+            self._notes_cb = None
+
+        layout.addSpacing(6)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        btn_row.addStretch()
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setStyleSheet(
+            "QPushButton { background: #252525; color: #888; border: 1px solid #3a3a3a;"
+            " border-radius: 3px; padding: 5px 14px; font-size: 12px; }"
+            "QPushButton:hover { background: #303030; color: #ccc; }"
+        )
+        cancel_btn.clicked.connect(self.reject)
+
+        clear_btn = QPushButton("Clear selected")
+        clear_btn.setStyleSheet(
+            "QPushButton { background: #3d1a1a; color: #cc3333; border: 1px solid #6e2e2e;"
+            " border-radius: 3px; padding: 5px 14px; font-size: 12px; }"
+            "QPushButton:hover { background: #5a1a1a; color: #ff5555; border: none; }"
+        )
+        clear_btn.clicked.connect(self._on_clear)
+
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(clear_btn)
+        layout.addLayout(btn_row)
+
+    def _on_clear(self):
+        self.selected_file_types = [
+            ft for ft, cb in self._checkboxes.items() if cb.isChecked()
+        ]
+        self.clear_notes = self._notes_cb is not None and self._notes_cb.isChecked()
+        if not self.selected_file_types and not self.clear_notes:
+            return
+        self.accept()
+
+
 # ── Main window ───────────────────────────────────────────────────────────────
 
 class MainWindow(QMainWindow):
@@ -386,6 +476,8 @@ class MainWindow(QMainWindow):
 
         self._sidebar.annotation_changed.connect(self._on_annotation_changed)
         self._sidebar.annotation_note_changed.connect(self._on_annotation_note_changed)
+        self._sidebar.filter_changed.connect(self._on_filter_changed)
+        self._sidebar.clear_annotations_requested.connect(self._on_annotations_clear_all)
         self._sidebar.export_tags_requested.connect(self._on_export_tags)
         self._sidebar.tags_visible_changed.connect(self._viewer.set_tags_visible)
         self._sidebar.tag_selected.connect(self._on_tag_selected)
@@ -529,8 +621,10 @@ class MainWindow(QMainWindow):
             path,
             [ind.oldname for ind in self._individuals],
             FILE_TYPE_ORDER,
+            all_entries=parse_file_entries(path),
         )
         self._sidebar.load_individuals(self._individuals)
+        self._init_annotation_indicators()
         if not self._individuals:
             return
         self._current_idx = 0
@@ -547,29 +641,70 @@ class MainWindow(QMainWindow):
             self._individuals[self._current_idx].oldname
             if 0 <= self._current_idx < len(self._individuals) else None
         )
+        prev_oldname = (
+            self._individuals[self._prev_idx].oldname
+            if self._prev_idx is not None and 0 <= self._prev_idx < len(self._individuals) else None
+        )
+
+        # Stop in-progress preloaders (evicts their partial cache entries).
         self._cancel_preloaders()
+        self._cache_cleanup_timer.stop()
+
+        # Snapshot the completed cache keyed by oldname before clearing index
+        # structures.  Partial entries were already evicted by _cancel_preloaders.
+        cached_by_name = {
+            self._individuals[idx].oldname: data
+            for idx, data in self._preload_cache.items()
+            if 0 <= idx < len(self._individuals)
+        }
+        complete_by_name = {
+            self._individuals[idx].oldname
+            for idx in self._preload_complete
+            if 0 <= idx < len(self._individuals)
+        }
+
         self._preload_cache.clear()
         self._preload_complete.clear()
         self._prev_idx = None
-        self._cache_cleanup_timer.stop()
+
         self._individuals = parse_file(self._par_path)
         self._annot_mgr.load(
             self._par_path,
             [ind.oldname for ind in self._individuals],
             FILE_TYPE_ORDER,
+            all_entries=parse_file_entries(self._par_path),
         )
         self._sidebar.load_individuals(self._individuals)
+        self._init_annotation_indicators()
+
         if not self._individuals:
             self._current_idx = -1
             return
+
+        # Remap surviving cache entries to the new index positions.
+        for new_idx, ind in enumerate(self._individuals):
+            if ind.oldname in cached_by_name:
+                self._preload_cache[new_idx] = cached_by_name[ind.oldname]
+            if ind.oldname in complete_by_name:
+                self._preload_complete.add(new_idx)
+
+        # Remap prev_idx by name so the eviction guard still works.
+        if prev_oldname:
+            for i, ind in enumerate(self._individuals):
+                if ind.oldname == prev_oldname:
+                    self._prev_idx = i
+                    break
+
         if current_oldname:
             for i, ind in enumerate(self._individuals):
                 if ind.oldname == current_oldname:
                     self._current_idx = i
                     self._sidebar.select_individual_silent(i)
+                    self._refresh_preload_indicators()
                     return
         self._current_idx = 0
         self._sidebar.select_individual_silent(0)
+        self._refresh_preload_indicators()
 
     def _on_load_requested(self, idx: int, file_types: list[str]):
         self._session_types = list(file_types)
@@ -648,6 +783,7 @@ class MainWindow(QMainWindow):
         available = {ft: (ft in resolved) for ft in FILE_TYPE_ORDER}
         self._sidebar.update_file_availability(available, set(resolved.keys()))
         self._sidebar.load_individuals([ind])
+        self._init_annotation_indicators()
         self._sidebar.select_individual_silent(0)
         self._sidebar.update_tag_list([], "")
 
@@ -692,6 +828,7 @@ class MainWindow(QMainWindow):
         available = {ft: (ft in file_paths) for ft in FILE_TYPE_ORDER}
         self._sidebar.update_file_availability(available, set(file_paths.keys()))
         self._sidebar.load_individuals([ind])
+        self._init_annotation_indicators()
         self._sidebar.select_individual_silent(0)
         self._sidebar.update_tag_list([], "")
 
@@ -882,10 +1019,25 @@ class MainWindow(QMainWindow):
     def _start_preload(self, current_idx: int):
         self._cancel_preloaders()
         n = len(self._individuals)
-        forward  = range(current_idx + 1, min(current_idx + _PRELOAD_AHEAD + 1, n))
-        backward = range(max(0, current_idx - _PRELOAD_BEHIND), current_idx)
-        self._preload_queue = [i for i in list(forward) + list(backward)
-                               if i not in self._preload_cache]
+        mode = self._sidebar.filter_mode
+        if mode == "All":
+            forward  = range(current_idx + 1, min(current_idx + _PRELOAD_AHEAD + 1, n))
+            backward = range(max(0, current_idx - _PRELOAD_BEHIND), current_idx)
+            candidates = list(forward) + list(backward)
+        else:
+            filtered = self._sidebar.filtered_indices
+            try:
+                pos = filtered.index(current_idx)
+            except ValueError:
+                pos = -1
+            if pos >= 0:
+                ahead  = filtered[pos + 1: pos + 1 + _PRELOAD_AHEAD]
+                behind = filtered[max(0, pos - _PRELOAD_BEHIND): pos]
+            else:
+                ahead  = filtered[:_PRELOAD_AHEAD]
+                behind = []
+            candidates = list(ahead) + list(behind)
+        self._preload_queue = [i for i in candidates if i not in self._preload_cache]
         self._start_next_preload()
 
     def _start_next_preload(self):
@@ -1228,20 +1380,26 @@ class MainWindow(QMainWindow):
     def _on_tags_clear_all(self) -> None:
         if not self._individuals:
             return
-        reply = QMessageBox.question(
-            self,
-            "Clear all tags",
-            "This will permanently delete all tags for every individual and file type.\n\nContinue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
+        dlg = _SelectiveClearDialog(
+            FILE_TYPE_ORDER,
+            FILE_TYPE_LABELS,
+            include_notes=False,
+            title="Clear all tags",
+            warning_text=(
+                "This will permanently remove tag JSON files from disk for every individual "
+                "in the selected file types. This cannot be undone."
+            ),
+            parent=self,
         )
-        if reply != QMessageBox.StandardButton.Yes:
+        if dlg.exec() != QDialog.DialogCode.Accepted:
             return
+        fts_to_clear = set(dlg.selected_file_types)
         for panel in self._viewer.panels:
-            panel.clear_tags()
+            if panel.file_type in fts_to_clear:
+                panel.clear_tags()
         deleted = 0
         for ind in self._individuals:
-            for ft in FILE_TYPE_ORDER:
+            for ft in fts_to_clear:
                 vol_path = resolve_file(ind, ft)
                 if vol_path is None:
                     continue
@@ -1254,11 +1412,81 @@ class MainWindow(QMainWindow):
                         pass
         self._notifs.show("Tags cleared", f"Removed tags from {deleted} file(s)", "info")
 
+    def _on_annotations_clear_all(self) -> None:
+        if not self._individuals:
+            return
+        dlg = _SelectiveClearDialog(
+            FILE_TYPE_ORDER,
+            FILE_TYPE_LABELS,
+            include_notes=True,
+            title="Clear annotations",
+            warning_text=(
+                "This will permanently delete the selected annotation categories "
+                "for every individual in memory. This cannot be undone."
+            ),
+            parent=self,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        fts = dlg.selected_file_types
+        clear_notes = dlg.clear_notes
+        self._annot_mgr.clear_file_types(fts, clear_notes=clear_notes)
+        self._init_annotation_indicators()
+        if 0 <= self._current_idx < len(self._individuals):
+            ind = self._individuals[self._current_idx]
+            self._sidebar.set_annotations(self._annot_mgr.get_row(ind.oldname))
+            if clear_notes:
+                self._sidebar.force_clear_annotation_note()
+        self._refresh_active_filter()
+        count = len(fts) + (1 if clear_notes else 0)
+        self._notifs.show(
+            "Annotations cleared",
+            f"Cleared {count} categor{'y' if count == 1 else 'ies'} for all individuals",
+            "info",
+        )
+
+    def _annotation_summary(self, ind: Individual) -> str:
+        """Worst-case annotation across all file types: Fail > Review > Pass > ''."""
+        vals = set(self._annot_mgr.get_row(ind.oldname).values())
+        if "Fail"   in vals: return "Fail"
+        if "Review" in vals: return "Review"
+        if "Pass"   in vals: return "Pass"
+        return ""
+
+    def _init_annotation_indicators(self) -> None:
+        indicators = {i: self._annotation_summary(ind)
+                      for i, ind in enumerate(self._individuals)}
+        self._sidebar.set_all_annotation_indicators(indicators)
+
+    def _on_filter_changed(self, mode: str) -> None:
+        if not self._individuals:
+            return
+        matching = self._compute_filter_matches(mode)
+        self._sidebar.apply_filter(mode, matching)
+        if self._current_idx >= 0:
+            self._start_preload(self._current_idx)
+
+    def _compute_filter_matches(self, mode: str) -> list[int]:
+        if mode == "All":
+            return list(range(len(self._individuals)))
+        return [
+            i for i, ind in enumerate(self._individuals)
+            if any(v == mode for v in self._annot_mgr.get_row(ind.oldname).values())
+        ]
+
+    def _refresh_active_filter(self) -> None:
+        mode = self._sidebar.filter_mode
+        if mode != "All" and self._individuals:
+            matching = self._compute_filter_matches(mode)
+            self._sidebar.apply_filter(mode, matching)
+
     def _on_annotation_changed(self, ft: str, value: str) -> None:
         if self._current_idx < 0:
             return
         ind = self._individuals[self._current_idx]
         self._annot_mgr.set(ind.oldname, ft, value)
+        self._sidebar.set_annotation_indicator(self._current_idx, self._annotation_summary(ind))
+        self._refresh_active_filter()
 
     def _on_annotation_note_changed(self, text: str) -> None:
         if self._current_idx < 0:
