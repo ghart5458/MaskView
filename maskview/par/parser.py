@@ -22,6 +22,8 @@ class Individual:
     bone: str
     portion: str
     raw_fields: dict = field(default_factory=dict)
+    # Row was '#'-prefixed in the PAR — lab convention for "already processed".
+    commented: bool = False
 
     @property
     def base_path(self) -> Path:
@@ -66,6 +68,22 @@ def _detect_delim(header: str) -> str:
     return ';' if sc >= cc else ','
 
 
+def _is_line_quoted(header: str, delim: str) -> bool:
+    """True if the whole row is one quoted field rather than real columns.
+
+    Excel opens a .par as a single column (it only splits on commas for .csv)
+    and re-quotes each row on save, so `a,b,c` comes back as `"a,b,c"`. csv
+    then sees one field and every column name is lost.
+    """
+    fields = next(csv.reader([header], delimiter=delim), [])
+    return len(fields) == 1 and delim in fields[0]
+
+
+def _unwrap(line: str) -> str:
+    s = line.strip()
+    return s[1:-1] if len(s) >= 2 and s[0] == '"' and s[-1] == '"' else s
+
+
 def _parse_rows(text: str) -> list[Individual]:
     """Parse delimiter-separated tabular text into a list of Individuals.
 
@@ -78,6 +96,11 @@ def _parse_rows(text: str) -> list[Individual]:
         return []
 
     delim = _detect_delim(header_line)
+    if _is_line_quoted(header_line, delim):
+        lines = [_unwrap(l) for l in lines]
+        header_line = next((l for l in lines if l.strip()), '')
+        delim = _detect_delim(header_line)
+
     reader = csv.reader(lines, delimiter=delim)
 
     raw_headers = next(reader, None)
@@ -85,17 +108,26 @@ def _parse_rows(text: str) -> list[Individual]:
         return []
     headers = [h.lstrip('$').strip() for h in raw_headers]
 
+    # A '#'-prefixed row is a processed-scan flag, not a comment — keep it.
+    # A genuine comment line has far fewer fields than the header.
+    min_fields = max(2, len(headers) // 2)
+
     individuals = []
     for row_fields in reader:
         if not row_fields or not any(f.strip() for f in row_fields):
             continue
-        if row_fields[0].lstrip().startswith('#'):
-            continue
+        commented = row_fields[0].lstrip().startswith('#')
+        if commented:
+            if len(row_fields) < min_fields:
+                continue
+            row_fields = [row_fields[0].lstrip().lstrip('#'), *row_fields[1:]]
         row = dict(zip(headers, [f.strip() for f in row_fields]))
         try:
-            individuals.append(_make_individual(row))
+            ind = _make_individual(row)
         except (ValueError, KeyError):
             continue
+        ind.commented = commented
+        individuals.append(ind)
 
     return individuals
 
